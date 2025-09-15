@@ -4,7 +4,10 @@ set -o pipefail
 
 source versions.sh
 
-apt-get update && apt-get install -y \
+echo 'Acquire::AllowInsecureRepositories "true";' > /etc/apt/apt.conf.d/99insecure
+echo 'APT::Get::AllowUnauthenticated "true";' >> /etc/apt/apt.conf.d/99insecure
+
+apt-get update && apt-get install -y --allow-unauthenticated \
     autoconf \
     build-essential \
     ca-certificates \
