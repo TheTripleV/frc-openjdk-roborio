@@ -4,7 +4,7 @@ set -o pipefail
 
 source versions.sh
 
-JVM_VARIANT=client
+JVM_VARIANT=server
 JVM_FEATURES=
 #JVM_VARIANT=minimal1
 #JVM_FEATURES=all-gcs,jvmti,services,vm-structs
