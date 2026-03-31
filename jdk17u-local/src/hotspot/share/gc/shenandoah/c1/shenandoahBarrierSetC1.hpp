@@ -197,10 +197,10 @@ private:
 
   void pre_barrier(LIRGenerator* gen, CodeEmitInfo* info, DecoratorSet decorators, LIR_Opr addr_opr, LIR_Opr pre_val);
 
-  LIR_Opr load_reference_barrier(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators);
+  LIR_Opr load_reference_barrier(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators, bool use_fixed_result = true);
   LIR_Opr iu_barrier(LIRGenerator* gen, LIR_Opr obj, CodeEmitInfo* info, DecoratorSet decorators);
 
-  LIR_Opr load_reference_barrier_impl(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators);
+  LIR_Opr load_reference_barrier_impl(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators, bool use_fixed_result = true);
 
   LIR_Opr ensure_in_register(LIRGenerator* gen, LIR_Opr obj, BasicType type);
 

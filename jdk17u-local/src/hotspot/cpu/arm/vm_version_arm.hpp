@@ -94,6 +94,7 @@ class VM_Version: public Abstract_VM_Version {
   static bool supports_compare_and_exchange() { return true; }
   static bool supports_kuser_cmpxchg32() { return _kuser_helper_version >= KUSER_VERSION_CMPXCHG32; }
   static bool supports_kuser_cmpxchg64() { return _kuser_helper_version >= KUSER_VERSION_CMPXCHG64; }
+  constexpr static bool supports_stack_watermark_barrier() { return true; }
   // Override Abstract_VM_Version implementation
   static bool use_biased_locking();
 

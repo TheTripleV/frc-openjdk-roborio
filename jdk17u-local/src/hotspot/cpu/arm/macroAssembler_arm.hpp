@@ -614,8 +614,10 @@ public:
     AbstractAssembler::emit_address((address)L.data());
   }
 
-  void resolve_oop_handle(Register result);
+  void resolve_oop_handle(Register result, Register tmp = Rtemp);
   void load_mirror(Register mirror, Register method, Register tmp);
+  void load_method_holder(Register holder, Register method);
+  void load_method_holder_cld(Register result, Register method);
 
 #define ARM_INSTR_1(common_mnemonic, arm32_mnemonic, arg_type) \
   void common_mnemonic(arg_type arg) { \
@@ -1069,6 +1071,7 @@ public:
   void restore_default_fp_mode();
 
   void safepoint_poll(Register tmp1, Label& slow_path);
+  void safepoint_poll(Register tmp1, Label& slow_path, bool at_return);
   void get_polling_page(Register dest);
   void read_polling_page(Register dest, relocInfo::relocType rtype);
 };

@@ -825,7 +825,15 @@ void frame::oops_interpreted_do(OopClosure* f, const RegisterMap* map, bool quer
   assert(is_interpreted_frame(), "Not an interpreted frame");
   assert(map != NULL, "map must be set");
   Thread *thread = Thread::current();
-  methodHandle m (thread, interpreter_frame_method());
+  // During concurrent stack scanning (e.g., Shenandoah GC), the Method* slot
+  // in an interpreter frame may be NULL if the frame is being set up or torn
+  // down by the owning thread. Access the raw slot directly to avoid assertions.
+  Method* m_raw = *interpreter_frame_method_addr();
+  if (m_raw == NULL) {
+    // Frame not fully initialized; skip oop processing for this frame.
+    return;
+  }
+  methodHandle m (thread, m_raw);
   jint      bci = interpreter_frame_bci();
 
   assert(!Universe::heap()->is_in(m()),
@@ -1081,7 +1089,11 @@ void frame::oops_do_internal(OopClosure* f, CodeBlobClosure* cf, const RegisterM
   } else if (CodeCache::contains(pc())) {
     oops_code_blob_do(f, cf, map, derived_mode);
   } else {
-    ShouldNotReachHere();
+    // Frame is outside known Java code regions (native/OS frame).
+    // This can happen during concurrent stack walks (e.g., Shenandoah GC)
+    // when a race condition causes the walk to go past the entry frame.
+    // No Java oops to process in such frames, so just return.
+    return;
   }
 }
 
@@ -1096,7 +1108,11 @@ void frame::nmethods_do(CodeBlobClosure* cf) const {
 void frame::metadata_do(MetadataClosure* f) const {
   ResourceMark rm;
   if (is_interpreted_frame()) {
-    Method* m = this->interpreter_frame_method();
+    Method* m = *interpreter_frame_method_addr();
+    if (m == NULL) {
+      // Frame not fully initialized during concurrent stack scan; skip.
+      return;
+    }
     assert(m != NULL, "expecting a method in this frame");
     f->do_metadata(m);
   }

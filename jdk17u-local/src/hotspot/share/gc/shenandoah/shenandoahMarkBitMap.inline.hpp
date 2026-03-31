@@ -40,6 +40,7 @@ inline HeapWord* ShenandoahMarkBitMap::index_to_address(size_t offset) const {
 }
 
 inline bool ShenandoahMarkBitMap::mark_strong(HeapWord* heap_addr, bool& was_upgraded) {
+  if (!_covered.contains(heap_addr)) return false;
   check_mark(heap_addr);
 
   idx_t bit = address_to_index(heap_addr);
@@ -65,6 +66,7 @@ inline bool ShenandoahMarkBitMap::mark_strong(HeapWord* heap_addr, bool& was_upg
 }
 
 inline bool ShenandoahMarkBitMap::mark_weak(HeapWord* heap_addr) {
+  if (!_covered.contains(heap_addr)) return false;
   check_mark(heap_addr);
 
   idx_t bit = address_to_index(heap_addr);
@@ -91,16 +93,19 @@ inline bool ShenandoahMarkBitMap::mark_weak(HeapWord* heap_addr) {
 }
 
 inline bool ShenandoahMarkBitMap::is_marked_strong(HeapWord* addr)  const {
+  if (!_covered.contains(addr)) return false;
   check_mark(addr);
   return at(address_to_index(addr));
 }
 
 inline bool ShenandoahMarkBitMap::is_marked_weak(HeapWord* addr) const {
+  if (!_covered.contains(addr)) return false;
   check_mark(addr);
   return at(address_to_index(addr) + 1);
 }
 
 inline bool ShenandoahMarkBitMap::is_marked(HeapWord* addr) const {
+  if (!_covered.contains(addr)) return false;
   check_mark(addr);
   idx_t index = address_to_index(addr);
   verify_index(index);

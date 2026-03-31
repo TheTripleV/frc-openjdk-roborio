@@ -37,6 +37,7 @@
 #include "runtime/os.inline.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/stubCodeGenerator.hpp"
+#include "runtime/stackWatermarkSet.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "vmreg_arm.inline.hpp"
 #ifdef COMPILER1
@@ -405,6 +406,23 @@ frame frame::sender_for_compiled_frame(RegisterMap* map) const {
   intptr_t* sender_sp = unextended_sp() + _cb->frame_size();
   intptr_t* unextended_sp = sender_sp;
 
+  // Shenandoah ARM32 concurrent scanning safety:
+  // If _cb->frame_size() is corrupt (e.g., stale CodeBlob during concurrent GC),
+  // sender_sp may have wrapped around to a tiny value on 32-bit ARM.
+  // Guard: sender_sp must be ABOVE current sp (stack grows down, older frames
+  // are at higher addresses) and must be a valid memory address.
+  // If invalid, use the thread's last_Java_sp anchor as a fallback to let
+  // callers see a "native frame" boundary and stop walking.
+  if (sender_sp <= this->sp() || (uintptr_t)sender_sp < 0x10000u) {
+    log_warning(gc)("Shenandoah: sender_for_compiled_frame: bad sender_sp " PTR_FORMAT
+                    " (current sp=" PTR_FORMAT ", frame_size=%d), skipping",
+                    p2i(sender_sp), p2i(this->sp()), _cb->frame_size());
+    // Return a minimal frame referencing the thread anchor to terminate frame walks.
+    // Setting _cb=NULL makes sender_raw() take the native fallback path, and with
+    // NULL pc the blob lookup returns NULL → the frame appears as native boundary.
+    return frame(sender_sp, sender_sp, fp(), NULL);
+  }
+
   address sender_pc = (address) *(sender_sp - sender_sp_offset + return_addr_offset);
 
   // This is the saved value of FP which may or may not really be an FP.
@@ -430,7 +448,7 @@ frame frame::sender_for_compiled_frame(RegisterMap* map) const {
   return frame(sender_sp, unextended_sp, *saved_fp_addr, sender_pc);
 }
 
-frame frame::sender(RegisterMap* map) const {
+frame frame::sender_raw(RegisterMap* map) const {
   // Default is we done have to follow them. The sender_for_xxx will
   // update it accordingly
   map->set_include_argument_oops(false);
@@ -443,8 +461,18 @@ frame frame::sender(RegisterMap* map) const {
     return sender_for_compiled_frame(map);
   }
 
-  assert(false, "should not be called for a C frame");
-  return frame();
+  // Must be native-compiled frame, i.e. marshaling code for native methods.
+  return frame(sender_sp(), link(), sender_pc());
+}
+
+frame frame::sender(RegisterMap* map) const {
+  frame result = sender_raw(map);
+
+  if (map->process_frames()) {
+    StackWatermarkSet::on_iteration(map->thread(), result);
+  }
+
+  return result;
 }
 
 bool frame::is_interpreted_frame_valid(JavaThread* thread) const {

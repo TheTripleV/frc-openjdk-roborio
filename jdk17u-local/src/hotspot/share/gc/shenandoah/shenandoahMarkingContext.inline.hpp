@@ -37,6 +37,10 @@ inline bool ShenandoahMarkingContext::mark_weak(oop obj) {
   return !allocated_after_mark_start(obj) && _mark_bit_map.mark_weak(cast_from_oop<HeapWord *>(obj));
 }
 
+inline bool ShenandoahMarkingContext::mark_strong_in_bitmap(oop obj, bool& was_upgraded) {
+  return _mark_bit_map.mark_strong(cast_from_oop<HeapWord*>(obj), was_upgraded);
+}
+
 inline bool ShenandoahMarkingContext::is_marked(oop obj) const {
   return allocated_after_mark_start(obj) || _mark_bit_map.is_marked(cast_from_oop<HeapWord *>(obj));
 }
@@ -59,6 +63,7 @@ inline bool ShenandoahMarkingContext::allocated_after_mark_start(oop obj) const 
 }
 
 inline bool ShenandoahMarkingContext::allocated_after_mark_start(HeapWord* addr) const {
+  if (!_mark_bit_map.heap_covers(addr)) return true; // Out of heap: treat as post-mark to skip marking
   uintx index = ((uintx) addr) >> ShenandoahHeapRegion::region_size_bytes_shift();
   HeapWord* top_at_mark_start = _top_at_mark_starts[index];
   bool alloc_after_mark_start = addr >= top_at_mark_start;

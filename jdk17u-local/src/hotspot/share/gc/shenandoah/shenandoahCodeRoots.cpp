@@ -149,7 +149,9 @@ public:
   }
 
   virtual void do_nmethod(nmethod* nm) {
-    _bs->disarm(nm);
+    if (_bs != NULL) {
+      _bs->disarm(nm);
+    }
   }
 };
 
@@ -241,7 +243,7 @@ public:
     ShenandoahReentrantLocker locker(nm_data->lock());
 
     // Heal oops and disarm
-    if (_bs->is_armed(nm)) {
+    if (_bs != NULL && _bs->is_armed(nm)) {
       ShenandoahEvacOOMScope oom_evac_scope;
       ShenandoahNMethod::heal_nmethod_metadata(nm_data);
       _bs->disarm(nm);

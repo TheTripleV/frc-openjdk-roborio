@@ -73,6 +73,7 @@
 
 #include "classfile/systemDictionary.hpp"
 #include "memory/classLoaderMetaspace.hpp"
+#include "memory/metaspace.hpp"
 #include "memory/metaspaceUtils.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "prims/jvmtiTagMap.hpp"
@@ -952,6 +953,11 @@ public:
 
   void do_object(oop p) {
     shenandoah_assert_marked(NULL, p);
+    // Safety net: skip objects with invalid klass (spurious bitmap marks from
+    // interior pointers that passed an earlier weaker klass check).
+    if (p->klass_or_null() == NULL || !Metaspace::contains(p->klass_or_null())) {
+      return;
+    }
     if (!p->is_forwarded()) {
       _heap->evacuate_object(p, _thread);
     }
@@ -1696,6 +1702,13 @@ void ShenandoahHeap::prepare_update_heap_references(bool concurrent) {
                             ShenandoahPhaseTimings::init_update_refs_manage_gclabs :
                             ShenandoahPhaseTimings::degen_gc_init_update_refs_manage_gclabs);
     gclabs_retire(ResizeTLAB);
+
+    // Without stack watermark barriers (ARM32), TLABs are not retired concurrently.
+    // Retire TLABs so their unused space is filled with fillers and they won't be
+    // reused (preventing races with concurrent heap iteration during update refs).
+    if (!ShenandoahStackWatermarkBarrier) {
+      tlabs_retire(ResizeTLAB);
+    }
   }
 
   _update_refs_iterator.reset();

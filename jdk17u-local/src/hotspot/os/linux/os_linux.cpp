@@ -2283,7 +2283,7 @@ void os::Linux::print_process_memory_info(outputStream* st) {
   // glibc only:
   // - Print outstanding allocations using mallinfo
   // - Print glibc tunables
-#ifdef __GLIBC__
+#if 0
   size_t total_allocated = 0;
   size_t free_retained = 0;
   bool might_have_wrapped = false;

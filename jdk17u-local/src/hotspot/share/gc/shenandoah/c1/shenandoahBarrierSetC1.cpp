@@ -110,22 +110,30 @@ void ShenandoahBarrierSetC1::pre_barrier(LIRGenerator* gen, CodeEmitInfo* info, 
   __ branch_destination(slow->continuation());
 }
 
-LIR_Opr ShenandoahBarrierSetC1::load_reference_barrier(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators) {
+LIR_Opr ShenandoahBarrierSetC1::load_reference_barrier(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators, bool use_fixed_result) {
   if (ShenandoahLoadRefBarrier) {
-    return load_reference_barrier_impl(gen, obj, addr, decorators);
+    return load_reference_barrier_impl(gen, obj, addr, decorators, use_fixed_result);
   } else {
     return obj;
   }
 }
 
-LIR_Opr ShenandoahBarrierSetC1::load_reference_barrier_impl(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators) {
+LIR_Opr ShenandoahBarrierSetC1::load_reference_barrier_impl(LIRGenerator* gen, LIR_Opr obj, LIR_Opr addr, DecoratorSet decorators, bool use_fixed_result) {
   assert(ShenandoahLoadRefBarrier, "Should be enabled");
 
   obj = ensure_in_register(gen, obj, T_OBJECT);
   assert(obj->is_register(), "must be a register at this point");
   addr = ensure_in_register(gen, addr, T_ADDRESS);
   assert(addr->is_register(), "must be a register at this point");
-  LIR_Opr result = gen->result_register_for(obj->value_type());
+  LIR_Opr result;
+  if (use_fixed_result) {
+    result = gen->result_register_for(obj->value_type());
+  } else {
+    // Use a virtual register to avoid clobbering live registers (e.g. the
+    // base address of a store). On ARM32 the fixed R0 result from
+    // result_register_for can conflict with the store's base register.
+    result = gen->new_register(obj->value_type());
+  }
   __ move(obj, result);
   LIR_Opr tmp1 = gen->new_register(T_ADDRESS);
   LIR_Opr tmp2 = gen->new_register(T_ADDRESS);
@@ -189,6 +197,24 @@ void ShenandoahBarrierSetC1::store_at_resolved(LIRAccess& access, LIR_Opr value)
   if (access.is_oop()) {
     if (ShenandoahSATBBarrier) {
       pre_barrier(access.gen(), access.access_emit_info(), access.decorators(), access.resolved_addr(), LIR_OprFact::illegalOpr /* pre_val */);
+    }
+    // ARM32 fix: Apply LRB to the value being stored to ensure it is a
+    // to-space reference. Without this, a C1-compiled method that holds a
+    // from-space oop (e.g. across a safepoint where the oop map missed it,
+    // or loaded from a not-yet-updated source) could store a stale
+    // from-space pointer into the heap. The concurrent update-refs phase
+    // may have already processed the target object, so the stale ref would
+    // never be fixed, leading to references into TRASH regions.
+    // On platforms with full C2 + stack watermark barriers this is not
+    // needed because the nmethod entry barrier and stack watermarks keep
+    // all oops updated. ARM32 client VM lacks stack watermark barriers,
+    // so this store-value LRB is the safety net.
+    if (ShenandoahLoadRefBarrier) {
+      LIRGenerator* gen = access.gen();
+      value = ensure_in_register(gen, value, T_OBJECT);
+      value = load_reference_barrier(gen, value, LIR_OprFact::addressConst(0),
+                                     access.decorators(),
+                                     false /* use_fixed_result: avoid clobbering store base */);
     }
     value = iu_barrier(access.gen(), value, access.access_emit_info(), access.decorators());
   }

@@ -27,6 +27,7 @@
 #include "compiler/oopMap.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
+#include "gc/shared/barrierSetNMethod.hpp"
 #include "interpreter/interpreter.hpp"
 #include "memory/universe.hpp"
 #include "nativeInst_arm.hpp"
@@ -2960,6 +2961,88 @@ class StubGenerator: public StubCodeGenerator {
   }
 
   //---------------------------------------------------------------------------
+  // Method entry barrier stub for nmethod entry barriers.
+  //
+  // Called from the nmethod entry barrier (BarrierSetAssembler::nmethod_entry_barrier).
+  // Saves caller-saved registers, calls BarrierSetNMethod::nmethod_stub_entry_barrier(),
+  // and either returns normally or deoptimizes the nmethod.
+  //
+  // Stack layout inside the stub (after all saves):
+  //   [SP+36] = saved LR (return addr into nmethod)  ← return_address_ptr
+  //   [SP+32] = saved FP
+  //   [SP+16..31] = deopt space (4 words, filled by deoptimize() if needed)
+  //   [SP+0..15]  = saved R0-R3 (argument registers)
+
+  address generate_method_entry_barrier() {
+    MacroAssembler* masm = _masm;
+    StubCodeMark mark(this, "StubRoutines", "nmethod_entry_barrier");
+    address start = __ pc();
+
+    Label deopt_label;
+
+    // Save FP and LR; set FP for frame linkage.
+    __ raw_push(FP, LR);           // SP -= 8; [SP]=FP, [SP+4]=LR
+    __ mov(FP, SP);                // stub frame pointer (for set_last_Java_frame)
+
+    // Reserve 4 words (16 bytes) for the deopt frame data.
+    // If deoptimize() is called, it writes {sp, fp, lr, pc} here.
+    __ sub(SP, SP, 16);            // SP -= 16
+
+    // Save caller-saved argument registers R0-R3.
+    // These may hold method arguments that haven't been spilled yet.
+    __ push(RegisterSet(R0, R3));  // SP -= 16; saves R0,R1,R2,R3
+
+    // Set up last Java frame so the GC can walk the stack.
+    // FP is the stub's frame pointer (points to saved {FP, LR}).
+    // SP is the current stack pointer.
+    // save_last_java_pc=true stores PC into last_Java_pc.
+    __ set_last_Java_frame(SP, FP, true, Rtemp);
+
+    // First argument: return_address_ptr = address of saved LR on stack.
+    // After pushes: saved LR is at SP + 16 (R0-R3) + 16 (deopt) + 4 (LR offset) = SP + 36
+    __ add(R0, SP, 36);
+
+    // Call BarrierSetNMethod::nmethod_stub_entry_barrier(address* return_address_ptr)
+    // Returns 0 for normal, non-zero for deoptimize.
+    __ mov_address(Rtemp, CAST_FROM_FN_PTR(address, BarrierSetNMethod::nmethod_stub_entry_barrier));
+    __ blx(Rtemp);
+
+    // Reset last Java frame.
+    __ reset_last_Java_frame(Rtemp);
+
+    // Save return value (deopt flag) before restoring arg registers.
+    __ mov(Rtemp, R0);
+
+    // Restore argument registers R0-R3.
+    __ pop(RegisterSet(R0, R3));   // SP += 16, now SP points to deopt space
+
+    // Check if we need to deoptimize.
+    __ cmp(Rtemp, 0);
+    __ b(deopt_label, ne);
+
+    // Normal path: skip deopt space, restore FP/LR, return.
+    __ mov(SP, FP);                // SP = FP (past deopt space, at saved {FP, LR})
+    __ raw_pop(FP, LR);           // restore FP and LR
+    __ bx(LR);                    // return to nmethod
+
+    // Deopt path: load the fake frame written by deoptimize().
+    // SP currently points to start of deopt space:
+    //   [SP+0]  = new SP (sender's SP)
+    //   [SP+4]  = new FP (sender's FP)
+    //   [SP+8]  = new LR (sender's PC / original caller return addr)
+    //   [SP+12] = handle_wrong_method_stub address
+    __ bind(deopt_label);
+    __ ldr(Rtemp, Address(SP, 12));  // handle_wrong_method_stub address
+    __ ldr(LR,    Address(SP, 8));   // sender's return address → LR
+    __ ldr(FP,    Address(SP, 4));   // sender's FP
+    __ ldr(R0,    Address(SP, 0));   // sender's SP
+    __ mov(SP, R0);                  // restore sender's SP
+    __ bx(Rtemp);                    // jump to handle_wrong_method_stub
+
+    return start;
+  }
+
+  //---------------------------------------------------------------------------
   // Initialization
 
   void generate_initial() {
@@ -3014,6 +3097,12 @@ class StubGenerator: public StubCodeGenerator {
 
     // arraycopy stubs used by compilers
     generate_arraycopy_stubs();
+
+    // nmethod entry barrier for concurrent GC nmethod scanning
+    BarrierSetNMethod* bs_nm = BarrierSet::barrier_set()->barrier_set_nmethod();
+    if (bs_nm != NULL) {
+      StubRoutines::Arm::_method_entry_barrier = generate_method_entry_barrier();
+    }
 
 #ifdef COMPILE_CRYPTO
     // generate AES intrinsics code

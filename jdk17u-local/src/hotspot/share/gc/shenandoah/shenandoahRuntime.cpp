@@ -52,6 +52,14 @@ JRT_LEAF(void, ShenandoahRuntime::write_ref_field_pre_entry(oopDesc* orig, JavaT
 JRT_END
 
 JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_strong(oopDesc* src, oop* load_addr))
+  if (((uintptr_t)src & 0x3) != 0) {
+    tty->print_cr("SHENANDOAH BUG: unaligned oop %p in LRB strong, load_addr=%p", (void*)src, (void*)load_addr);
+    // Print caller LR from stack if possible
+    tty->print_cr("  Thread=%p", Thread::current());
+  }
+  if (load_addr != NULL && ((uintptr_t)load_addr & 0x3) != 0) {
+    tty->print_cr("SHENANDOAH BUG: unaligned load_addr %p in LRB strong, src=%p", (void*)load_addr, (void*)src);
+  }
   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
 JRT_END
 

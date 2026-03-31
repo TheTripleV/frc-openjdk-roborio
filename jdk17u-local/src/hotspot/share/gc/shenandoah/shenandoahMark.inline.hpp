@@ -37,6 +37,8 @@
 #include "memory/iterator.inline.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "memory/metaspace.hpp"
+#include "runtime/os.hpp"
 #include "runtime/prefetch.inline.hpp"
 #include "utilities/powerOfTwo.hpp"
 
@@ -57,6 +59,31 @@ void ShenandoahMark::dedup_string(oop obj, StringDedup::Requests* const req) {
 template <class T, StringDedupMode STRING_DEDUP>
 void ShenandoahMark::do_task(ShenandoahObjToScanQueue* q, T* cl, ShenandoahLiveData* live_data, StringDedup::Requests* const req, ShenandoahMarkTask* task) {
   oop obj = task->obj();
+
+  if (obj == NULL || !ShenandoahHeap::heap()->is_in(obj)) {
+    log_debug(gc)("Shenandoah: do_task: bad oop " PTR_FORMAT " skip_live=%d weak=%d chunk=%d pow=%d",
+                  p2i(obj), task->count_liveness() ? 0 : 1, task->is_weak() ? 1 : 0, task->chunk(), task->pow());
+    return;
+  }
+
+  if (obj->klass_or_null_acquire() == NULL) {
+    log_debug(gc)("Shenandoah: do_task: NULL klass oop " PTR_FORMAT " skip_live=%d weak=%d chunk=%d pow=%d",
+                  p2i(obj), task->count_liveness() ? 0 : 1, task->is_weak() ? 1 : 0, task->chunk(), task->pow());
+    return;
+  }
+
+  // Fix 8: Verify klass pointer is in metaspace before dereferencing.
+  // Interior/derived pointers (from OopMap bugs, SATB races, or stale refs on ARM32)
+  // can have klass fields that point into heap data or arbitrary memory.
+  // Metaspace::contains() rejects heap addresses that would pass is_readable_pointer().
+  {
+    Klass* k = obj->klass_or_null_acquire();
+    if (!Metaspace::contains(k)) {
+      log_debug(gc)("Shenandoah: do_task: klass " PTR_FORMAT " not in metaspace for oop " PTR_FORMAT " - skipping",
+                      p2i(k), p2i(obj));
+      return;
+    }
+  }
 
   shenandoah_assert_not_forwarded(NULL, obj);
   shenandoah_assert_marked(NULL, obj);
@@ -238,6 +265,11 @@ public:
     assert(size == 0 || !_heap->has_forwarded_objects(), "Forwarded objects are not expected here");
     for (size_t i = 0; i < size; ++i) {
       oop *p = (oop *) &buffer[i];
+      oop val = *p;
+      if (val != NULL && !_heap->is_in(val)) {
+        log_debug(gc)("Shenandoah: SATB buffer: bad oop " PTR_FORMAT " at index %zu/%zu, buffer=" PTR_FORMAT,
+                      p2i(val), i, size, p2i(buffer));
+      }
       ShenandoahMark::mark_through_ref<oop>(p, _queue, _mark_context, false);
     }
   }
@@ -248,6 +280,19 @@ inline void ShenandoahMark::mark_through_ref(T* p, ShenandoahObjToScanQueue* q, 
   T o = RawAccess<>::oop_load(p);
   if (!CompressedOops::is_null(o)) {
     oop obj = CompressedOops::decode_not_null(o);
+
+    if (!ShenandoahHeap::heap()->is_in(obj)) {
+      log_debug(gc)("Shenandoah: mark_through_ref: bad oop " PTR_FORMAT " from " PTR_FORMAT " weak=%d",
+                    p2i(obj), p2i(p), weak ? 1 : 0);
+      return;
+    }
+
+    // Fix #9: REMOVED the Metaspace klass check that was here (old "Fix 8").
+    // That check silently dropped valid oops whose klass pointer happened to
+    // fail the Metaspace::contains() test, causing concurrent marking to miss
+    // transitively-reachable objects.  ShenandoahVerify caught this:
+    //   "Before Evacuation, Marked; Must be marked in complete bitmap"
+    // The is_in() check above is sufficient to guard against invalid oops.
 
     shenandoah_assert_not_forwarded(p, obj);
     shenandoah_assert_not_in_cset_except(p, obj, ShenandoahHeap::heap()->cancelled_gc());
@@ -262,6 +307,18 @@ inline void ShenandoahMark::mark_through_ref(T* p, ShenandoahObjToScanQueue* q, 
     if (marked) {
       bool pushed = q->push(ShenandoahMarkTask(obj, skip_live, weak));
       assert(pushed, "overflow queue should always succeed pushing");
+    } else if (!ShenandoahStackWatermarkBarrier && mark_context->allocated_after_mark_start(obj)) {
+      // Without stack watermark barriers, objects allocated after mark start
+      // (above TAMS) are implicitly marked but their fields may not have been
+      // scanned. When we discover such an object through a reference, we must
+      // push it to the queue so its fields get traced. Use the bitmap's
+      // mark_strong as a "visited" flag — for above-TAMS objects the bitmap
+      // is normally untouched, so first mark_strong will succeed.
+      bool was_upgraded = false;
+      if (mark_context->mark_strong_in_bitmap(obj, was_upgraded)) {
+        bool pushed = q->push(ShenandoahMarkTask(obj, /* skip_live = */ true, weak));
+        assert(pushed, "overflow queue should always succeed pushing");
+      }
     }
 
     shenandoah_assert_marked(p, obj);

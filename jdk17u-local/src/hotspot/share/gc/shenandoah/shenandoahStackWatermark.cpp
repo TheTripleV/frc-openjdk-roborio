@@ -129,6 +129,12 @@ void ShenandoahStackWatermark::retire_tlab() {
 }
 
 void ShenandoahStackWatermark::process(const frame& fr, RegisterMap& register_map, void* context) {
+  // Safety: skip frames outside Java code space (native boundary).
+  // This can happen during concurrent stack walks due to race conditions.
+  // Entry frames have cb != NULL (call stub blob), so they pass through.
+  if (!fr.is_interpreted_frame() && fr.cb() == NULL) {
+    return;
+  }
   OopClosure* oops = closure_from_context(context);
   assert(oops != NULL, "Should not get to here");
   ShenandoahHeap* const heap = ShenandoahHeap::heap();

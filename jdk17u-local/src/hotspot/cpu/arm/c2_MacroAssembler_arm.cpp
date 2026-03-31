@@ -106,8 +106,9 @@ void C2_MacroAssembler::fast_lock(Register Roop, Register Rbox, Register Rscratc
   // Invariant: Rmark loaded below does not contain biased lock pattern
 
   ldr(Rmark, Address(Roop, oopDesc::mark_offset_in_bytes()));
-  tst(Rmark, markWord::unlocked_value);
-  b(fast_lock, ne);
+  andr(Rscratch, Rmark, markWord::lock_mask_in_place);
+  cmp(Rscratch, markWord::unlocked_value);
+  b(fast_lock, eq);
 
   // Check for recursive lock
   // See comments in InterpreterMacroAssembler::lock_object for

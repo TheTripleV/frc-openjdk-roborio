@@ -141,6 +141,9 @@ public:
 
   ShenandoahMarkBitMap(MemRegion heap, MemRegion storage);
 
+  // Check if address is within the covered heap range
+  bool heap_covers(const HeapWord* addr) const { return _covered.contains(addr); }
+
   // Mark word as 'strong' if it hasn't been marked strong yet.
   // Return true if the word has been marked strong, false if it has already been
   // marked strong or if another thread has beat us by marking it

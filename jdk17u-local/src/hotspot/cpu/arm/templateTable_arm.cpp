@@ -2740,7 +2740,12 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
   const int max_block_size = 1 << log_max_block_size;
 
   // Decide if fast version is enabled
-  bool fast_version = (is_static || !RewriteBytecodes) && !VerifyOops;
+  // When using Shenandoah GC, atos (object reference) loads must go through
+  // do_oop_load() which applies the Load Reference Barrier. The fast version
+  // merges atos with itos and loads oops as T_INT, bypassing the barrier.
+  // This causes getstatic for oop fields to return stale from-space references,
+  // breaking reference identity comparisons (e.g., enum == checks).
+  bool fast_version = (is_static || !RewriteBytecodes) && !VerifyOops && !UseShenandoahGC;
 
   // On 32-bit ARM atos and itos cases can be merged only for fast version, because
   // atos requires additional processing in slow version.
@@ -2913,6 +2918,23 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
   // atos case can be merged with itos case (and thus moved out of table switch) on 32-bit ARM, fast version only
 
   __ bind(Lint);
+  // When atos and itos are merged, Rflags still holds the shifted tos_state.
+  // We must use do_oop_load for atos to apply the load reference barrier (LRB)
+  // required by Shenandoah and other collecting GCs. Without it, from-space oops
+  // can be stored into newly allocated objects, corrupting the heap.
+  if (atos_merged_with_itos) {
+    Label Litos_only;
+    __ cmp(Rflags, atos);
+    __ b(Litos_only, ne);
+    // atos path: use do_oop_load to apply LRB
+    do_oop_load(_masm, R0_tos, Address(Robj, Roffset));
+    __ push(atos);
+    if (!is_static && rc == may_rewrite) {
+      patch_bytecode(Bytecodes::_fast_agetfield, R0_tmp, Rtemp);
+    }
+    __ b(Done);
+    __ bind(Litos_only);
+  }
   __ access_load_at(T_INT, IN_HEAP, Address(Robj, Roffset), R0_tos, noreg, noreg, noreg);
   __ push(itos);
   // Rewrite bytecode to be faster
@@ -3582,6 +3604,20 @@ void TemplateTable::prepare_invoke(int byte_no,
     __ andr(temp, flags, (uintx)ConstantPoolCacheEntry::parameter_size_mask);  // get parameter size
     Address recv_addr = __ receiver_argument_address(Rstack_top, temp, recv);
     __ ldr(recv, recv_addr);
+#if INCLUDE_SHENANDOAHGC
+    if (ShenandoahLoadRefBarrier) {
+      Label no_forwarded, done;
+      __ cbz(recv, done);
+      __ ldr(temp, Address(recv, oopDesc::mark_offset_in_bytes()));
+      __ mvn(temp, temp);
+      __ tst(temp, markWord::lock_mask_in_place);
+      __ b(no_forwarded, ne);
+      __ orr(temp, temp, markWord::marked_value);
+      __ mvn(recv, temp);
+      __ bind(no_forwarded);
+      __ bind(done);
+    }
+#endif
     __ verify_oop(recv);
   }
 

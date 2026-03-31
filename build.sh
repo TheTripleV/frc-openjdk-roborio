@@ -4,18 +4,14 @@ set -o pipefail
 
 source versions.sh
 
-JVM_VARIANT=server
-JVM_FEATURES=
+JVM_VARIANT=client
+JVM_FEATURES=shenandoahgc
 #JVM_VARIANT=minimal1
 #JVM_FEATURES=all-gcs,jvmti,services,vm-structs
 
-wget -nc https://github.com/openjdk/jdk17u/archive/refs/tags/${GIT_TAG}.tar.gz
-tar xzf ${GIT_TAG}.tar.gz
-pushd jdk17u-`echo ${GIT_TAG} | sed -e s/+/-/`
-patch -p0 < ../config.guess.patch
-patch -p1 < ../kill_on_abort.patch
-patch -p1 < ../disable_mallinfo.patch
-patch -p1 < ../error_log_timeout.patch
+# Use local source tree (mounted at /artifacts/jdk17u-local) instead of downloading
+cp -a /artifacts/jdk17u-local jdk17u-local-build
+pushd jdk17u-local-build
 bash configure \
 	--openjdk-target=arm-frc${YEAR}-linux-gnueabi \
 	--with-abi-profile=arm-vfp-sflt \
@@ -28,7 +24,7 @@ bash configure \
 	--with-version-patch=${JAVA_PATCH} \
 	--with-version-opt=${YEAR}-${VER} \
 	--disable-warnings-as-errors
-make JOBS=`nproc` LOG=cmdlines all legacy-jre-image
+make JOBS=${BUILD_JOBS:-$(nproc)} LOG=cmdlines all legacy-jre-image
 pushd build/linux-arm-${JVM_VARIANT}-release/images
 tar czf jre_${VER}.tar.gz jre
 chown -R `id -u`:`id -g` jre_${VER}.tar.gz

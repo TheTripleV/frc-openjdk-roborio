@@ -181,6 +181,23 @@ void MethodHandles::jump_to_lambda_form(MacroAssembler* _masm,
   BLOCK_COMMENT("} jump_to_lambda_form");
 }
 
+static void resolve_forwarded_if_needed(MacroAssembler* _masm, Register obj, Register tmp) {
+#if INCLUDE_SHENANDOAHGC
+  if (ShenandoahLoadRefBarrier) {
+    Label no_forwarded, done;
+    __ cbz(obj, done);
+    __ ldr(tmp, Address(obj, oopDesc::mark_offset_in_bytes()));
+    __ mvn(tmp, tmp);
+    __ tst(tmp, markWord::lock_mask_in_place);
+    __ b(no_forwarded, ne);
+    __ orr(tmp, tmp, markWord::marked_value);
+    __ mvn(obj, tmp);
+    __ bind(no_forwarded);
+    __ bind(done);
+  }
+#endif
+}
+
 
 // Code generation
 address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler* _masm,
@@ -248,6 +265,7 @@ address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler* 
 
   if (!is_signature_polymorphic_static(iid)) {
     __ ldr(rcx_mh, rdx_first_arg_addr);
+    resolve_forwarded_if_needed(_masm, rcx_mh, rdi_temp);
     DEBUG_ONLY(rdx_param_size = noreg);
   }
 
@@ -264,10 +282,12 @@ address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler* 
     if (MethodHandles::ref_kind_has_receiver(ref_kind)) {
       // Load the receiver (not the MH; the actual MemberName's receiver) up from the interpreter stack.
       __ ldr(rcx_recv = rcx_mh, rdx_first_arg_addr);
+      resolve_forwarded_if_needed(_masm, rcx_recv, rdi_temp);
       DEBUG_ONLY(rdx_param_size = noreg);
     }
     Register rbx_member = rbx_method;  // MemberName ptr; incoming method ptr is dead now
     __ pop(rbx_member);
+    resolve_forwarded_if_needed(_masm, rbx_member, rdi_temp);
     generate_method_handle_dispatch(_masm, iid, rcx_recv, rbx_member, not_for_compiler_entry);
   }
   return entry_point;

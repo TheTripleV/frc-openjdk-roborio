@@ -34,6 +34,9 @@
 #include "gc/shared/cardTableBarrierSet.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/tlab_globals.hpp"
+#if INCLUDE_SHENANDOAHGC
+#include "gc/shenandoah/shenandoah_globals.hpp"
+#endif
 #include "interpreter/interpreter.hpp"
 #include "memory/universe.hpp"
 #include "nativeInst_arm.hpp"
@@ -572,6 +575,22 @@ OopMapSet* Runtime1::generate_code_for(StubID id, StubAssembler* sasm) {
     case register_finalizer_id:
       {
         __ set_info("register_finalizer", dont_gc_arguments);
+
+#if INCLUDE_SHENANDOAHGC
+        // Shenandoah: resolve forwarding pointer for 'this' (R0)
+        // before reading klass. On ARM32 without stack watermark barriers,
+        // the oop may be a stale from-space reference.
+        if (UseShenandoahGC) {
+          Label not_forwarded;
+          __ ldr(Rtemp, Address(R0, oopDesc::mark_offset_in_bytes()));
+          __ mvn(Rtemp, Rtemp);
+          __ tst(Rtemp, markWord::lock_mask_in_place);
+          __ b(not_forwarded, ne);
+          __ orr(Rtemp, Rtemp, markWord::marked_value);
+          __ mvn(R0, Rtemp);
+          __ bind(not_forwarded);
+        }
+#endif
 
         // Do not call runtime if JVM_ACC_HAS_FINALIZER flag is not set
         __ load_klass(Rtemp, R0);

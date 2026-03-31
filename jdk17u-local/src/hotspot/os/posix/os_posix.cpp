@@ -2081,7 +2081,7 @@ void os::abort(bool dump_core, void* siginfo, const void* context) {
     LINUX_ONLY(if (DumpPrivateMappingsInCore) ClassLoader::close_jrt_image();)
     ::abort(); // dump core
   }
-  ::_exit(1);
+  os::signal_raise(SIGKILL);
 }
 
 // Die immediately, no exit hook, no abort hook, no cleanup.

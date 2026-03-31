@@ -193,7 +193,7 @@ void ShenandoahConcurrentRootScanner::roots_do(OopClosure* oops, uint worker_id)
 }
 
 void ShenandoahConcurrentRootScanner::update_tlab_stats() {
-  if (UseTLAB) {
+  if (UseTLAB && ShenandoahStackWatermarkBarrier) {
     ThreadLocalAllocStats total;
     for (uint i = 0; i < _java_threads.length(); i ++) {
       Thread* thr = _java_threads.thread_at(i);

@@ -322,11 +322,15 @@ bool ObjectSynchronizer::quick_enter(oop obj, JavaThread* current,
   NoSafepointVerifier nsv;
   if (obj == NULL) return false;       // Need to throw NPE
 
+  markWord mark = obj->mark();
+  if (mark.is_marked()) {
+    obj = cast_to_oop(mark.clear_lock_bits().to_pointer());
+    mark = obj->mark();
+  }
+
   if (obj->klass()->is_value_based()) {
     return false;
   }
-
-  const markWord mark = obj->mark();
 
   if (mark.has_monitor()) {
     ObjectMonitor* const m = mark.monitor();
@@ -432,6 +436,12 @@ void ObjectSynchronizer::handle_sync_on_value_based_class(Handle obj, JavaThread
 // changed. The implementation is extremely sensitive to race condition. Be careful.
 
 void ObjectSynchronizer::enter(Handle obj, BasicLock* lock, JavaThread* current) {
+  markWord mark = obj->mark();
+  if (mark.is_marked()) {
+    obj = Handle(current, cast_to_oop(mark.clear_lock_bits().to_pointer()));
+    mark = obj->mark();
+  }
+
   if (obj->klass()->is_value_based()) {
     handle_sync_on_value_based_class(obj, current);
   }
@@ -439,8 +449,7 @@ void ObjectSynchronizer::enter(Handle obj, BasicLock* lock, JavaThread* current)
   if (UseBiasedLocking) {
     BiasedLocking::revoke(current, obj);
   }
-
-  markWord mark = obj->mark();
+  mark = obj->mark();
   assert(!mark.has_bias_pattern(), "should not see bias pattern here");
 
   if (mark.is_neutral()) {
@@ -477,6 +486,10 @@ void ObjectSynchronizer::enter(Handle obj, BasicLock* lock, JavaThread* current)
 
 void ObjectSynchronizer::exit(oop object, BasicLock* lock, JavaThread* current) {
   markWord mark = object->mark();
+  if (mark.is_marked()) {
+    object = cast_to_oop(mark.clear_lock_bits().to_pointer());
+    mark = object->mark();
+  }
   // We cannot check for Biased Locking if we are racing an inflation.
   assert(mark == markWord::INFLATING() ||
          !mark.has_bias_pattern(), "should not see bias pattern here");
@@ -1250,6 +1263,15 @@ ObjectMonitor* ObjectSynchronizer::inflate(Thread* current, oop object,
   for (;;) {
     const markWord mark = object->mark_acquire();
     assert(!mark.has_bias_pattern(), "invariant");
+
+    // Shenandoah: during concurrent GC, the object may have been evacuated.
+    // The old copy's mark word contains the forwarding pointer (tag 11).
+    // Without stack watermark barriers, oops on the stack may still reference
+    // the old copy. Resolve to the new copy and retry.
+    if (mark.is_marked()) {
+      object = cast_to_oop(mark.clear_lock_bits().to_pointer());
+      continue;
+    }
 
     // The mark can be in one of the following states:
     // *  Inflated     - just return

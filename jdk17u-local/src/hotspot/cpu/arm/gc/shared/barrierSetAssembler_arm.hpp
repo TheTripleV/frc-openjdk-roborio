@@ -64,6 +64,12 @@ public:
     Label&             slow_case         // continuation point if fast allocation fails
   );
 
+  virtual void try_resolve_jobject_in_native(MacroAssembler* masm, Register jni_env,
+                                             Register obj, Register tmp, Label& slowpath);
+
+  virtual void nmethod_entry_barrier(MacroAssembler* masm);
+  virtual void c2i_entry_barrier(MacroAssembler* masm);
+
   virtual void barrier_stubs_init() {}
 };
 

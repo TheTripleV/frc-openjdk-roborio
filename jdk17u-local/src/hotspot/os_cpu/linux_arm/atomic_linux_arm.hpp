@@ -108,6 +108,12 @@ inline int32_t reorder_cmpxchg_func(int32_t exchange_value,
                                     int32_t volatile* dest,
                                     int32_t compare_value) {
   // Warning:  Arguments are swapped to avoid moving them for kernel call
+  if (((uintptr_t)dest & 0x3) != 0) {
+    fprintf(stderr, "SHENANDOAH BUG: unaligned CAS dest %p, cmp=%08x xchg=%08x\n",
+            (void*)dest, (unsigned)compare_value, (unsigned)exchange_value);
+    // Return compare_value (CAS "fails") to avoid SIGBUS
+    return compare_value;
+  }
   return (*os::atomic_cmpxchg_func)(compare_value, exchange_value, dest);
 }
 

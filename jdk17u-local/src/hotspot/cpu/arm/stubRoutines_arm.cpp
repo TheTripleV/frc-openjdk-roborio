@@ -31,5 +31,7 @@ address StubRoutines::Arm::_idiv_irem_entry = NULL;
 
 address StubRoutines::Arm::_partial_subtype_check = NULL;
 
+address StubRoutines::Arm::_method_entry_barrier = NULL;
+
 address StubRoutines::_atomic_load_long_entry = NULL;
 address StubRoutines::_atomic_store_long_entry = NULL;

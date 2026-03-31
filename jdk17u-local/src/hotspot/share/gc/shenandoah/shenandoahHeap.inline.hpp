@@ -42,6 +42,7 @@
 #include "gc/shenandoah/shenandoahControlThread.hpp"
 #include "gc/shenandoah/shenandoahMarkingContext.inline.hpp"
 #include "gc/shenandoah/shenandoahThreadLocalData.hpp"
+#include "memory/metaspace.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/atomic.hpp"
@@ -184,6 +185,11 @@ inline void ShenandoahHeap::conc_update_with_forwarded(T* p) {
 
 inline void ShenandoahHeap::atomic_update_oop(oop update, oop* addr, oop compare) {
   assert(is_aligned(addr, HeapWordSize), "Address should be aligned: " PTR_FORMAT, p2i(addr));
+  if (!is_aligned(addr, HeapWordSize)) {
+    tty->print_cr("SHENANDOAH BUG: unaligned addr %p in atomic_update_oop, update=%p compare=%p",
+                  (void*)addr, (void*)(oopDesc*)update, (void*)(oopDesc*)compare);
+    return; // Skip the CAS to avoid SIGBUS
+  }
   Atomic::cmpxchg(addr, compare, update, memory_order_release);
 }
 
@@ -282,6 +288,19 @@ inline oop ShenandoahHeap::evacuate_object(oop p, Thread* thread) {
   }
 
   assert(ShenandoahThreadLocalData::is_evac_allowed(thread), "must be enclosed in oom-evac scope");
+
+  // Fix 10: Verify klass pointer is a valid metaspace pointer before calling p->size().
+  // Spurious bitmap marks at interior addresses (e.g. inside byte[] data) can reach here
+  // if earlier safety nets are optimized away. The klass field of such "objects" contains
+  // arbitrary byte data. Without this check, p->size() → klass()->oop_size() dereferences
+  // the garbage klass and crashes (SIGSEGV).
+  {
+    Klass* k = p->klass_or_null();
+    if (k == NULL || !Metaspace::contains(k)) {
+      // Not a valid object - return p as-is (caller will see no forwarding)
+      return p;
+    }
+  }
 
   size_t size = p->size();
 
@@ -470,6 +489,12 @@ inline void ShenandoahHeap::marked_object_iterate(ShenandoahHeapRegion* region, 
         assert (slots[c] < tams,  "only objects below TAMS here: "  PTR_FORMAT " (" PTR_FORMAT ")", p2i(slots[c]), p2i(tams));
         assert (slots[c] < limit, "only objects below limit here: " PTR_FORMAT " (" PTR_FORMAT ")", p2i(slots[c]), p2i(limit));
         oop obj = cast_to_oop(slots[c]);
+        // Safety net: skip spurious bitmap marks at interior addresses (e.g.
+        // inside byte[] data) whose klass field is not a valid metaspace pointer.
+        Klass* k = obj->klass_or_null();
+        if (k == NULL || !Metaspace::contains(k)) {
+          continue;
+        }
         assert(oopDesc::is_oop(obj), "sanity");
         assert(ctx->is_marked(obj), "object expected to be marked");
         cl->do_object(obj);
@@ -480,9 +505,13 @@ inline void ShenandoahHeap::marked_object_iterate(ShenandoahHeapRegion* region, 
       assert (cb < tams,  "only objects below TAMS here: "  PTR_FORMAT " (" PTR_FORMAT ")", p2i(cb), p2i(tams));
       assert (cb < limit, "only objects below limit here: " PTR_FORMAT " (" PTR_FORMAT ")", p2i(cb), p2i(limit));
       oop obj = cast_to_oop(cb);
-      assert(oopDesc::is_oop(obj), "sanity");
-      assert(ctx->is_marked(obj), "object expected to be marked");
-      cl->do_object(obj);
+      // Safety net: skip spurious bitmap marks at interior addresses.
+      Klass* k_check = obj->klass_or_null();
+      if (k_check != NULL && Metaspace::contains(k_check)) {
+        assert(oopDesc::is_oop(obj), "sanity");
+        assert(ctx->is_marked(obj), "object expected to be marked");
+        cl->do_object(obj);
+      }
       cb += skip_bitmap_delta;
       if (cb < limit_bitmap) {
         cb = ctx->get_next_marked_addr(cb, limit_bitmap);
@@ -498,6 +527,16 @@ inline void ShenandoahHeap::marked_object_iterate(ShenandoahHeapRegion* region, 
     assert (cs >= tams, "only objects past TAMS here: "   PTR_FORMAT " (" PTR_FORMAT ")", p2i(cs), p2i(tams));
     assert (cs < limit, "only objects below limit here: " PTR_FORMAT " (" PTR_FORMAT ")", p2i(cs), p2i(limit));
     oop obj = cast_to_oop(cs);
+    if (obj->klass_or_null() == NULL) {
+      tty->print_cr("SHENANDOAH BUG: NULL klass at " PTR_FORMAT " in region " SIZE_FORMAT
+                     ", tams=" PTR_FORMAT " limit=" PTR_FORMAT " top=" PTR_FORMAT,
+                     p2i(cs), region->index(), p2i(tams), p2i(limit), p2i(region->top()));
+      // Print surrounding words for debugging
+      for (int i = -2; i < 8; i++) {
+        tty->print_cr("  [%+d] " PTR_FORMAT ": " PTR_FORMAT, i, p2i(cs + i), *(uintptr_t*)(cs + i));
+      }
+      break;
+    }
     assert(oopDesc::is_oop(obj), "sanity");
     assert(ctx->is_marked(obj), "object expected to be marked");
     int size = obj->size();

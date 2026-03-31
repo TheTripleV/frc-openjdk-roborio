@@ -189,6 +189,10 @@ inline oop ShenandoahBarrierSet::oop_load(DecoratorSet decorators, T* addr) {
 
 template <typename T>
 inline oop ShenandoahBarrierSet::oop_cmpxchg(DecoratorSet decorators, T* addr, oop compare_value, oop new_value) {
+  // Fix #8C: UNCONDITIONALLY resolve forwarding pointer on new_value before CAS.
+  if (ShenandoahLoadRefBarrier && new_value != NULL) {
+    new_value = resolve_forwarded(new_value);
+  }
   iu_barrier(new_value);
   oop res;
   oop expected = compare_value;
@@ -207,6 +211,10 @@ inline oop ShenandoahBarrierSet::oop_cmpxchg(DecoratorSet decorators, T* addr, o
 
 template <typename T>
 inline oop ShenandoahBarrierSet::oop_xchg(DecoratorSet decorators, T* addr, oop new_value) {
+  // Fix #8C: UNCONDITIONALLY resolve forwarding pointer on new_value before xchg.
+  if (ShenandoahLoadRefBarrier && new_value != NULL) {
+    new_value = resolve_forwarded(new_value);
+  }
   iu_barrier(new_value);
   oop previous = RawAccess<>::oop_atomic_xchg(addr, new_value);
   // Note: We don't need a keep-alive-barrier here. We already enqueue any loaded reference for SATB anyway,
@@ -245,6 +253,17 @@ inline void ShenandoahBarrierSet::AccessBarrier<decorators, BarrierSetT>::oop_st
   shenandoah_assert_marked_if(NULL, value, !CompressedOops::is_null(value) && ShenandoahHeap::heap()->is_evacuation_in_progress());
   shenandoah_assert_not_in_cset_if(addr, value, value != NULL && !ShenandoahHeap::heap()->cancelled_gc());
   ShenandoahBarrierSet* const bs = ShenandoahBarrierSet::barrier_set();
+  // Fix #8C: UNCONDITIONALLY resolve forwarding pointer on the value being stored.
+  // A thread may hold a stale from-space reference even between GC cycles
+  // (e.g. in a local variable not processed by the stack watermark or thread
+  // root update). Storing it into the heap would create a dangling pointer
+  // once the from-space region is recycled. The previous check for
+  // has_forwarded_objects() missed the case where stale refs survive past
+  // final_updaterefs. resolve_forwarded is a no-op for normal (non-forwarded)
+  // objects, so this is safe and cheap.
+  if (ShenandoahLoadRefBarrier && value != NULL) {
+    value = resolve_forwarded(value);
+  }
   bs->iu_barrier(value);
   bs->satb_barrier<decorators>(addr);
   Raw::oop_store(addr, value);

@@ -28,6 +28,8 @@
 #include "code/icBuffer.hpp"
 #include "code/vtableStubs.hpp"
 #include "compiler/oopMap.hpp"
+#include "gc/shared/barrierSet.hpp"
+#include "gc/shared/barrierSetAssembler.hpp"
 #include "interpreter/interpreter.hpp"
 #include "logging/log.hpp"
 #include "memory/resourceArea.hpp"
@@ -858,8 +860,9 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 
     __ ldr(Rtemp, Address(obj_reg, oopDesc::mark_offset_in_bytes()));
 
-    assert(markWord::unlocked_value == 1, "adjust this code");
-    __ tbz(Rtemp, exact_log2(markWord::unlocked_value), slow_case);
+    __ andr(R3, Rtemp, markWord::lock_mask_in_place);
+    __ cmp(R3, markWord::unlocked_value);
+    __ b(slow_case, ne);
 
     if (UseBiasedLocking) {
       assert(is_power_of_2(markWord::biased_lock_bit_in_place), "adjust this code");
@@ -880,6 +883,13 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
   __ raw_push(FP, LR);
   __ mov(FP, SP);
   __ sub_slow(SP, SP, stack_size - 2*wordSize);
+
+  // Nmethod entry barrier.  Required so BarrierSetNMethod::disarm() can find
+  // the guard data word at a fixed offset before frame_complete.  Without this,
+  // disarm() corrupts nmethod code because it writes to the wrong address.
+  // Matches aarch64's generate_native_wrapper.
+  BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  bs->nmethod_entry_barrier(masm);
 
   int frame_complete = __ pc() - start;
 
@@ -1167,8 +1177,9 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 
     __ ldr(mark, Address(sync_obj, oopDesc::mark_offset_in_bytes()));
     __ sub(disp_hdr, FP, lock_slot_fp_offset);
-    __ tst(mark, markWord::unlocked_value);
-    __ b(fast_lock, ne);
+    __ andr(Rtemp, mark, markWord::lock_mask_in_place);
+    __ cmp(Rtemp, markWord::unlocked_value);
+    __ b(fast_lock, eq);
 
     // Check for recursive lock
     // See comments in InterpreterMacroAssembler::lock_object for
@@ -1221,7 +1232,7 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
   // make sure the store is observed before reading the SafepointSynchronize state and further mem refs
   __ membar(MacroAssembler::Membar_mask_bits(MacroAssembler::StoreLoad | MacroAssembler::StoreStore), Rtemp);
 
-  __ safepoint_poll(R2, call_safepoint_runtime);
+  __ safepoint_poll(R2, call_safepoint_runtime, true /* at_return */);
   __ ldr_u32(R3, Address(Rthread, JavaThread::suspend_flags_offset()));
   __ cmp(R3, 0);
   __ b(call_safepoint_runtime, ne);

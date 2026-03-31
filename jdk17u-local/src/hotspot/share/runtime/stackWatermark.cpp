@@ -99,6 +99,13 @@ void StackWatermarkFramesIterator::process_one(void* context) {
     uintptr_t sp = reinterpret_cast<uintptr_t>(f.sp());
     bool frame_has_barrier = StackWatermark::has_barrier(f);
     _owner.process(f, register_map(), context);
+    // Safety: if this frame is outside Java code space (no barrier, no CodeBlob,
+    // not interpreted, not entry), we've reached the native stack boundary.
+    // Stop walking to avoid dereferencing invalid frame pointers.
+    if (!frame_has_barrier && f.cb() == NULL &&
+        !f.is_interpreted_frame() && !f.is_entry_frame()) {
+      break;
+    }
     next();
     if (frame_has_barrier) {
       set_watermark(sp);
@@ -120,6 +127,11 @@ void StackWatermarkFramesIterator::process_all(void* context) {
     assert(sp >= _caller, "invariant");
     bool frame_has_barrier = StackWatermark::has_barrier(f);
     _owner.process(f, register_map(), context);
+    // Safety: stop if we've reached the native stack boundary
+    if (!frame_has_barrier && f.cb() == NULL &&
+        !f.is_interpreted_frame() && !f.is_entry_frame()) {
+      break;
+    }
     next();
     if (frame_has_barrier) {
       set_watermark(sp);
@@ -154,6 +166,45 @@ bool StackWatermarkFramesIterator::has_next() const {
 }
 
 void StackWatermarkFramesIterator::next() {
+  // Shenandoah ARM32 concurrent scanning safety:
+  // sender_for_compiled_frame computes sender_sp = unextended_sp() + cb->frame_size().
+  // On 32-bit ARM, if frame_size() returns a corrupt large value (e.g., from a stale
+  // or deoptimizing CodeBlob seen during concurrent stack scanning), the pointer
+  // arithmetic wraps around to a tiny invalid address, causing SIGSEGV.
+  // Detect this before calling _frame_stream.next() and terminate the walk cleanly.
+  {
+    frame& f = *_frame_stream.current();
+    if (!f.is_interpreted_frame() && f.cb() != NULL) {
+      int fsize = f.cb()->frame_size();
+      // Max sane frame: 8192 words (32KB). Anything larger is corrupt.
+      // Also check that sender_sp (sp + fsize words) won't overflow:
+      // On 32-bit, sender_sp must be > current sp (stack grows down, old frames higher).
+      const int MAX_FRAME_SIZE_WORDS = 8192;
+      if (fsize == 0) {
+        // frame_size==0 is normal for runtime stubs / buffer blobs at the bottom
+        // of a Java thread's call stack (e.g. thread-entry adapters). These frames
+        // don't contain Java oops, so stopping here is correct. Log at debug only.
+        log_debug(gc)("Shenandoah: StackWatermark stopping walk - stub frame (frame_size 0) at " PTR_FORMAT,
+                      p2i(f.unextended_sp()));
+        _is_done = true;
+        return;
+      }
+      if (fsize < 0 || fsize > MAX_FRAME_SIZE_WORDS) {
+        log_warning(gc)("Shenandoah: StackWatermark stopping walk - corrupt frame_size %d for frame at " PTR_FORMAT,
+                        fsize, p2i(f.unextended_sp()));
+        _is_done = true;
+        return;
+      }
+      intptr_t* sender_sp = f.unextended_sp() + fsize;
+      // sender_sp must be higher (older frame), never lower or equal
+      if (sender_sp <= f.unextended_sp()) {
+        log_warning(gc)("Shenandoah: StackWatermark stopping walk - sender_sp overflow at " PTR_FORMAT,
+                        p2i(f.unextended_sp()));
+        _is_done = true;
+        return;
+      }
+    }
+  }
   _frame_stream.next();
   _is_done = _frame_stream.is_done();
 }

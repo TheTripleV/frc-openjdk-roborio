@@ -25,6 +25,8 @@
 #include "precompiled.hpp"
 #include "c1/c1_MacroAssembler.hpp"
 #include "c1/c1_Runtime1.hpp"
+#include "gc/shared/barrierSet.hpp"
+#include "gc/shared/barrierSetAssembler.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/tlab_globals.hpp"
 #include "interpreter/interpreter.hpp"
@@ -63,6 +65,10 @@ void C1_MacroAssembler::build_frame(int frame_size_in_bytes, int bang_size_in_by
   // if this method contains a methodHandle call site
   raw_push(FP, LR);
   sub_slow(SP, SP, frame_size_in_bytes);
+
+  // Insert nmethod entry barrier into frame.
+  BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  bs->nmethod_entry_barrier(this);
 }
 
 void C1_MacroAssembler::remove_frame(int frame_size_in_bytes) {
@@ -223,8 +229,9 @@ int C1_MacroAssembler::lock_object(Register hdr, Register obj,
   // Must be the first instruction here, because implicit null check relies on it
   ldr(hdr, Address(obj, oopDesc::mark_offset_in_bytes()));
 
-  tst(hdr, markWord::unlocked_value);
-  b(fast_lock, ne);
+  andr(tmp2, hdr, markWord::lock_mask_in_place);
+  cmp(tmp2, markWord::unlocked_value);
+  b(fast_lock, eq);
 
   // Check for recursive locking
   // See comments in InterpreterMacroAssembler::lock_object for

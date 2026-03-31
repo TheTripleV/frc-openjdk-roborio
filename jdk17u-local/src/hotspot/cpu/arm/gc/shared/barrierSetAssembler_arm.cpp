@@ -23,12 +23,28 @@
  */
 
 #include "precompiled.hpp"
+#include "asm/macroAssembler.inline.hpp"
+#include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
+#include "gc/shared/barrierSetNMethod.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#include "classfile/classLoaderData.hpp"
 #include "memory/universe.hpp"
+#include "oops/instanceKlass.hpp"
+#include "runtime/jniHandles.hpp"
+#include "runtime/sharedRuntime.hpp"
+#include "runtime/stubRoutines.hpp"
 #include "runtime/thread.hpp"
 
 #define __ masm->
+
+void BarrierSetAssembler::try_resolve_jobject_in_native(MacroAssembler* masm, Register jni_env,
+                                                        Register obj, Register tmp, Label& slowpath) {
+  // Resolve jobject: strip the weak tag and load
+  STATIC_ASSERT(JNIHandles::weak_tag_mask == 1);
+  __ bic(obj, obj, JNIHandles::weak_tag_mask);
+  __ ldr(obj, Address(obj, 0));             // *obj
+}
 
 void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                   Register dst, Address src, Register tmp1, Register tmp2, Register tmp3) {
@@ -238,4 +254,87 @@ void BarrierSetAssembler::incr_allocated_bytes(MacroAssembler* masm, RegisterOrC
 
   // Unborrow the Rthread
   __ sub(Rthread, Ralloc, in_bytes(JavaThread::allocated_bytes_offset()));
+}
+
+void BarrierSetAssembler::nmethod_entry_barrier(MacroAssembler* masm) {
+  BarrierSetNMethod* bs_nm = BarrierSet::barrier_set()->barrier_set_nmethod();
+
+  if (bs_nm == NULL) {
+    return;
+  }
+
+  Label skip;
+  InlinedAddress guard_literal((address)0);
+  Address thread_disarmed_addr(Rthread, in_bytes(bs_nm->thread_disarmed_offset()));
+
+  // Load guard value (PC-relative literal).
+  // ldr_literal generates: ldr Rtemp, [PC, #offset_to_guard]
+  // The literal is bound below (bind_literal) and patched by the assembler.
+  __ ldr_literal(Rtemp, guard_literal);
+
+  // Subsequent loads of oops must occur after load of guard value.
+  // BarrierSetNMethod::disarm sets guard with release semantics.
+  // On ARMv7 this emits a single dmb instruction (does NOT clobber Rtemp).
+  __ membar(MacroAssembler::Membar_mask_bits(MacroAssembler::LoadLoad), Rtemp);
+
+  // Load thread's disarmed value and compare with guard
+  __ ldr(LR, thread_disarmed_addr);
+  __ cmp(Rtemp, LR);
+  __ b(skip, eq);
+
+  // Slow path: call the method entry barrier stub.
+  // LR has been saved to the stack by the frame setup code (raw_push(FP, LR)),
+  // so we can clobber it here with the blx.
+  // Emit exactly movw+movt (2 instructions) for deterministic barrier size,
+  // even if the stub address fits in 16 bits (mov_address may skip movt).
+  address stub = StubRoutines::Arm::method_entry_barrier();
+  int stub_addr = (int)(intptr_t)stub;
+  __ movw(Rtemp, stub_addr & 0xffff);
+  __ movt(Rtemp, ((unsigned int)stub_addr >> 16) & 0xffff);
+  __ blx(Rtemp);
+  __ b(skip);
+
+  __ bind_literal(guard_literal);  // emits guard data word inline
+
+  __ bind(skip);
+}
+
+void BarrierSetAssembler::c2i_entry_barrier(MacroAssembler* masm) {
+  BarrierSetNMethod* bs = BarrierSet::barrier_set()->barrier_set_nmethod();
+  if (bs == NULL) {
+    return;
+  }
+
+  Label bad_call;
+  __ cbz(Rmethod, bad_call);
+
+  // Pointer chase to the method holder's ClassLoaderData to check if the method is
+  // concurrently unloading.
+  Label method_live;
+
+  // load_method_holder_cld: method → ConstMethod → ConstantPool → InstanceKlass → CLD
+  __ load_method_holder_cld(Rtemp, Rmethod);
+
+  // Is it a strong CLD?
+  __ ldr(LR, Address(Rtemp, ClassLoaderData::keep_alive_offset()));
+  __ cbnz(LR, method_live);
+
+  // Is it a weak but alive CLD?
+  // Load the holder (an OopHandle)
+  __ ldr(Rtemp, Address(Rtemp, ClassLoaderData::holder_offset()));
+
+  // Resolve weak handle: NULL or cleared weak → method is dead
+  __ cbz(Rtemp, bad_call);
+
+  // WeakHandle::resolve is an indirection like jweak. Use access_load_at to go
+  // through the GC load barrier (needed for Shenandoah LRB + phantom ref).
+  // loads *Rtemp into Rtemp, applying IN_NATIVE | ON_PHANTOM_OOP_REF barriers.
+  __ access_load_at(T_OBJECT, IN_NATIVE | ON_PHANTOM_OOP_REF,
+                    Address(Rtemp), Rtemp, LR, noreg, noreg);
+  __ cbnz(Rtemp, method_live);
+
+  __ bind(bad_call);
+  __ jump(SharedRuntime::get_handle_wrong_method_stub(), relocInfo::runtime_call_type, Rtemp);
+
+  __ bind(method_live);
 }

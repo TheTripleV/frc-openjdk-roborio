@@ -35,24 +35,17 @@
 #include "utilities/defaultStream.hpp"
 
 void ShenandoahArguments::initialize() {
-#if !(defined AARCH64 || defined AMD64 || defined IA32 || defined PPC64 || defined RISCV64)
+#if !(defined AARCH64 || defined AMD64 || defined IA32 || defined PPC64 || defined RISCV64 || defined ARM32)
   vm_exit_during_initialization("Shenandoah GC is not supported on this platform.");
 #endif
 
-#if 0 // leave this block as stepping stone for future platforms
-  log_warning(gc)("Shenandoah GC is not fully supported on this platform:");
-  log_warning(gc)("  concurrent modes are not supported, only STW cycles are enabled;");
-  log_warning(gc)("  arch-specific barrier code is not implemented, disabling barriers;");
-
-  FLAG_SET_DEFAULT(ShenandoahGCHeuristics,           "passive");
-
-  FLAG_SET_DEFAULT(ShenandoahSATBBarrier,            false);
-  FLAG_SET_DEFAULT(ShenandoahLoadRefBarrier,         false);
-  FLAG_SET_DEFAULT(ShenandoahIUBarrier,              false);
-  FLAG_SET_DEFAULT(ShenandoahCASBarrier,             false);
-  FLAG_SET_DEFAULT(ShenandoahCloneBarrier,           false);
-
+#ifdef ARM32
+  // ARM32 Shenandoah runs with full concurrent barriers enabled for low pause times.
+  // C2 barrier verification is disabled as ARM32 typically runs C1-only.
+#ifdef ASSERT
   FLAG_SET_DEFAULT(ShenandoahVerifyOptoBarriers,     false);
+#endif
+  // ARM32 now supports stack watermark barriers (frame_arm.cpp::sender_raw + on_iteration).
 #endif
   if (UseLargePages) {
     size_t large_page_size = os::large_page_size();

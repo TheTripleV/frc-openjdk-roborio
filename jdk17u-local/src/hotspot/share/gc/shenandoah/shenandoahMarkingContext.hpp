@@ -67,6 +67,9 @@ public:
   inline bool is_marked_strong(oop obj) const;
   inline bool is_marked_weak(oop obj) const;
 
+  // Mark above-TAMS object in bitmap (used as visited flag when stack watermark is off)
+  inline bool mark_strong_in_bitmap(oop obj, bool& was_upgraded);
+
   inline HeapWord* get_next_marked_addr(HeapWord* addr, HeapWord* limit) const;
 
   inline bool allocated_after_mark_start(oop obj) const;

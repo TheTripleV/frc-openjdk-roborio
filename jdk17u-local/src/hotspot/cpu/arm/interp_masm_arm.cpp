@@ -273,13 +273,25 @@ void InterpreterMacroAssembler::load_resolved_reference_at_index(
   // load pointer for resolved_references[] objArray
   ldr(cache, Address(result, ConstantPool::cache_offset_in_bytes()));
   ldr(cache, Address(result, ConstantPoolCache::resolved_references_offset_in_bytes()));
+  if (index == Rtemp) {
+    // Push 2 registers (8 bytes) to maintain ARM EABI 8-byte stack alignment.
+    // The LRB inside resolve_oop_handle pushes 6 registers (24 bytes) before
+    // calling the runtime, so total = 8+24 = 32 bytes => still 8-byte aligned.
+    // R1 is not live here (ret_type is computed after this call) and is safe
+    // as an alignment pad; the LRB also saves/restores it internally.
+    push(RegisterSet(R1) | RegisterSet(index));
+  }
   resolve_oop_handle(cache);
+  if (index == Rtemp) {
+    pop(RegisterSet(R1) | RegisterSet(index));
+  }
   // Add in the index
   // convert from field index to resolved_references() index and from
   // word index to byte offset. Since this is a java object, it can be compressed
   logical_shift_left(index, index, LogBytesPerHeapOop);
+  add(index, cache, index);
   add(index, index, arrayOopDesc::base_offset_in_bytes(T_OBJECT));
-  load_heap_oop(result, Address(cache, index));
+  load_heap_oop(result, Address(index));
 }
 
 void InterpreterMacroAssembler::load_resolved_klass_at_offset(
@@ -698,8 +710,27 @@ void InterpreterMacroAssembler::remove_activation(TosState state, Register ret_a
                                                   bool install_monitor_exception,
                                                   bool notify_jvmdi) {
   Label unlock, unlocked, no_unlock;
+  Label slow_path, fast_path;
 
   // Note: Registers R0, R1, S0 and D0 (TOS cached value) may be in use for the result.
+
+  // The below poll is for the stack watermark barrier. It allows fixing up frames lazily,
+  // that would normally not be safe to use. Such bad returns into unsafe territory of
+  // the stack, will call InterpreterRuntime::at_unwind.
+  ldr_u32(Rtemp, Address(Rthread, JavaThread::polling_word_offset()));
+  cmp(FP, Rtemp);
+  b(slow_path, hi);
+  b(fast_path);
+
+  bind(slow_path);
+  push(state);
+  set_last_Java_frame(SP, FP, true, Rtemp);
+  mov(R0, Rthread);
+  call_VM_leaf(CAST_FROM_FN_PTR(address, InterpreterRuntime::at_unwind), R0);
+  ldr(SP, Address(Rthread, JavaThread::last_Java_sp_offset()));
+  reset_last_Java_frame(Rtemp);
+  pop(state);
+  bind(fast_path);
 
   const Address do_not_unlock_if_synchronized(Rthread,
                          JavaThread::do_not_unlock_if_synchronized_offset());
@@ -904,8 +935,9 @@ void InterpreterMacroAssembler::lock_object(Register Rlock) {
     ldr(Rmark, Address(Robj, oopDesc::mark_offset_in_bytes()));
 
     // Test if object is already locked
-    tst(Rmark, markWord::unlocked_value);
-    b(already_locked, eq);
+    andr(R0, Rmark, markWord::lock_mask_in_place);
+    cmp(R0, markWord::unlocked_value);
+    b(already_locked, ne);
 
     // Save old object->mark() into BasicLock's displaced header
     str(Rmark, Address(Rlock, mark_offset));

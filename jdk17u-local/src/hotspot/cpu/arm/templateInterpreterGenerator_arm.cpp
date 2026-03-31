@@ -916,7 +916,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 
   {
   Label call, skip_call;
-  __ safepoint_poll(Rtemp, call);
+  __ safepoint_poll(Rtemp, call, true /* at_return */);
   __ ldr_u32(R3, Address(Rthread, JavaThread::suspend_flags_offset()));
   __ cmp(R3, 0);
   __ b(skip_call, eq);

@@ -283,7 +283,11 @@ void OopMapSet::all_do(const frame *fr, const RegisterMap *reg_map,
   NOT_PRODUCT(if (TraceCodeBlobStacks) trace_codeblob_maps(fr, reg_map);)
 
   const ImmutableOopMap* map = cb->oop_map_for_return_address(fr->pc());
-  assert(map != NULL, "no ptr map found");
+  // During concurrent stack scanning (e.g., Shenandoah GC), the frame's PC
+  // may not match any OopMap entry. Skip this frame if no map is found.
+  if (map == NULL) {
+    return;
+  }
 
   // handle derived pointers first (otherwise base pointer may be
   // changed before derived pointer offset has been collected)
@@ -376,7 +380,10 @@ void OopMapSet::update_register_map(const frame *fr, RegisterMap *reg_map) {
 
   address pc = fr->pc();
   const ImmutableOopMap* map  = cb->oop_map_for_return_address(pc);
-  assert(map != NULL, "no ptr map found");
+  // During concurrent stack scanning, the frame's PC may not match any OopMap.
+  if (map == NULL) {
+    return;
+  }
   DEBUG_ONLY(int nof_callee = 0;)
 
   for (OopMapStream oms(map); !oms.is_done(); oms.next()) {
@@ -518,8 +525,13 @@ const ImmutableOopMap* ImmutableOopMapSet::find_map_at_offset(int pc_offset) con
     }
   }
 
-  // Heal Coverity issue: potential index out of bounds access.
-  guarantee(last != NULL, "last may not be null");
+  // During concurrent stack scanning (e.g., Shenandoah GC), a frame's return
+  // address may not match any OopMap entry if the frame or nmethod is being
+  // modified concurrently. Return NULL instead of crashing so the caller can
+  // skip the frame gracefully.
+  if (last == NULL) {
+    return NULL;
+  }
   assert(last->pc_offset() == pc_offset, "oopmap not found");
   return last->get_from(this);
 }

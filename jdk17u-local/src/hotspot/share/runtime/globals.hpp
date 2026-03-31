@@ -509,7 +509,7 @@ const intx ObjectAlignmentInBytes = 8;
   product(bool, CreateCoredumpOnCrash, true,                                \
           "Create core/mini dump on VM fatal error")                        \
                                                                             \
-  product(uint64_t, ErrorLogTimeout, 2 * 60,                                \
+  product(uint64_t, ErrorLogTimeout, 2,                                     \
           "Timeout, in seconds, to limit the time spent on writing an "     \
           "error log in case of a crash.")                                  \
           range(0, (uint64_t)max_jlong/1000)                                \

@@ -1818,9 +1818,10 @@ int MacroAssembler::patchable_call(address target, RelocationHolder const& rspec
 }
 
 // ((OopHandle)result).resolve();
-void MacroAssembler::resolve_oop_handle(Register result) {
+void MacroAssembler::resolve_oop_handle(Register result, Register tmp) {
   // OopHandle::resolve is an indirection.
-  ldr(result, Address(result, 0));
+  // Use access_load_at to go through GC barrier set (needed for Shenandoah LRB).
+  access_load_at(T_OBJECT, IN_NATIVE, Address(result, 0), result, tmp, noreg, noreg);
 }
 
 void MacroAssembler::load_mirror(Register mirror, Register method, Register tmp) {
@@ -1829,7 +1830,20 @@ void MacroAssembler::load_mirror(Register mirror, Register method, Register tmp)
   ldr(tmp, Address(tmp,  ConstMethod::constants_offset()));
   ldr(tmp, Address(tmp, ConstantPool::pool_holder_offset_in_bytes()));
   ldr(mirror, Address(tmp, mirror_offset));
-  resolve_oop_handle(mirror);
+  resolve_oop_handle(mirror, tmp);
+}
+
+// Chase method → ConstMethod → ConstantPool → InstanceKlass (method holder)
+void MacroAssembler::load_method_holder(Register holder, Register method) {
+  ldr(holder, Address(method, Method::const_offset()));
+  ldr(holder, Address(holder, ConstMethod::constants_offset()));
+  ldr(holder, Address(holder, ConstantPool::pool_holder_offset_in_bytes()));
+}
+
+// Chase method → holder → ClassLoaderData
+void MacroAssembler::load_method_holder_cld(Register result, Register method) {
+  load_method_holder(result, method);
+  ldr(result, Address(result, InstanceKlass::class_loader_data_offset()));
 }
 
 
@@ -1889,8 +1903,27 @@ void MacroAssembler::access_store_at(BasicType type, DecoratorSet decorators,
 
 void MacroAssembler::safepoint_poll(Register tmp1, Label& slow_path) {
   ldr_u32(tmp1, Address(Rthread, JavaThread::polling_word_offset()));
-  tst(tmp1, exact_log2(SafepointMechanism::poll_bit()));
-  b(slow_path, eq);
+  // poll_bit() == 1, so we test the actual bit mask (not log2 which AArch64 uses for tbnz)
+  tst(tmp1, SafepointMechanism::poll_bit());
+  b(slow_path, ne);  // ne = bit set = armed = slow path needed
+}
+
+void MacroAssembler::safepoint_poll(Register tmp1, Label& slow_path, bool at_return) {
+  ldr_u32(tmp1, Address(Rthread, JavaThread::polling_word_offset()));
+  if (at_return) {
+    // Stack watermark check: if FP > polling_word, we need the slow path.
+    // When only a stack watermark is set (no global safepoint), polling_word
+    // holds the watermark address (word-aligned, bit 0 = 0). The tst-based
+    // check misses this because it only tests poll_bit. By comparing FP
+    // against polling_word, we catch both global safepoints (armed value has
+    // bit 0 set, so it's a small value < any stack address) and watermarks
+    // (FP above the watermark means frames need processing).
+    cmp(FP, tmp1);
+    b(slow_path, hi);
+  } else {
+    tst(tmp1, SafepointMechanism::poll_bit());
+    b(slow_path, ne);
+  }
 }
 
 void MacroAssembler::get_polling_page(Register dest) {
