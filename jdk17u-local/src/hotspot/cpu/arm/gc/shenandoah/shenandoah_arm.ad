@@ -39,6 +39,7 @@ instruct compareAndSwapP_shenandoah(memoryex mem, iRegP oldval, iRegP newval,
   ins_encode %{
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(&_masm,
         $mem$$Register, $oldval$$Register, $newval$$Register,
+        /*is_cae*/false,
         $tmp1$$Register, $tmp2$$Register, $tmp3$$Register,
         $res$$Register);
   %}
@@ -52,18 +53,13 @@ instruct compareAndExchangeP_shenandoah(memoryex mem, iRegP oldval, iRegP newval
   effect(KILL ccr, TEMP_DEF res, TEMP tmp1, TEMP tmp2, TEMP tmp3);
   ins_cost(1000);
 
-  format %{ "shenandoah_cas_oop $mem, $oldval, $newval" %}
+  format %{ "shenandoah_cae_oop $mem, $oldval, $newval" %}
 
   ins_encode %{
-    // For exchange mode, the result is the value fetched from memory.
-    // Our ARM32 cmpxchg_oop returns a boolean in result.
-    // For CompareAndExchange, we need to return the old value.
-    // Load the current value first, then attempt the CAS.
-    // If CAS succeeds, result should be the original expected value.
-    // If CAS fails, result should be the current memory value.
-    // Simplify: just do a CAS and load the result appropriately.
+    // is_cae=true: result gets the actual in-memory value rather than a boolean.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(&_masm,
         $mem$$Register, $oldval$$Register, $newval$$Register,
+        /*is_cae*/true,
         $tmp1$$Register, $tmp2$$Register, $tmp3$$Register,
         $res$$Register);
   %}

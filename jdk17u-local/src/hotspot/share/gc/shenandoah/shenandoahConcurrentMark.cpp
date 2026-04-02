@@ -127,12 +127,10 @@ private:
   ShenandoahConcurrentMark* _cm;
   TaskTerminator*           _terminator;
   bool                      _dedup_string;
-  volatile size_t           _claimed_regions;
 
 public:
   ShenandoahFinalMarkingTask(ShenandoahConcurrentMark* cm, TaskTerminator* terminator, bool dedup_string) :
-    AbstractGangTask("Shenandoah Final Mark"), _cm(cm), _terminator(terminator), _dedup_string(dedup_string),
-    _claimed_regions(0) {
+    AbstractGangTask("Shenandoah Final Mark"), _cm(cm), _terminator(terminator), _dedup_string(dedup_string) {
   }
 
   void work(uint worker_id) {
@@ -152,50 +150,14 @@ public:
       assert(!heap->has_forwarded_objects(), "Not expected");
 
       ShenandoahMarkRefsClosure             mark_cl(q, rp);
-      // Scan thread stacks if IU barrier is enabled OR if stack watermark barriers
-      // are disabled (ARM32). Without stack watermark barriers, thread stacks aren't
-      // scanned concurrently, so we must scan them here at final mark to discover
-      // references from newly allocated objects to pre-existing objects.
-      bool scan_thread_stacks = ShenandoahIUBarrier || !ShenandoahStackWatermarkBarrier;
+      // Scan thread stacks at final mark if IU barrier is enabled.  With stack
+      // watermark barriers, thread stacks are processed lazily during concurrent
+      // marking via ShenandoahConcurrentMarkThreadClosure; we only need the
+      // extra scan here when IU barrier forces re-examination of SATB queues.
+      bool scan_thread_stacks = ShenandoahIUBarrier;
       ShenandoahSATBAndRemarkThreadsClosure tc(satb_mq_set,
                                                scan_thread_stacks ? &mark_cl : NULL);
       Threads::threads_do(&tc);
-    }
-
-    // Without stack watermark barriers (ARM32), objects allocated above TAMS
-    // during concurrent marking may never be discovered by mark_through_ref
-    // if they were stored into already-scanned roots (static fields, JNI globals).
-    // SATB only logs the OLD value being overwritten, not the new above-TAMS object.
-    // Scan all above-TAMS objects to ensure their fields get traced.
-    if (!ShenandoahStackWatermarkBarrier) {
-      ShenandoahObjToScanQueue* q = _cm->get_queue(worker_id);
-      ShenandoahMarkingContext* const mark_context = heap->marking_context();
-      size_t num_regions = heap->num_regions();
-      size_t idx;
-      while ((idx = Atomic::fetch_and_add(&_claimed_regions, (size_t)1, memory_order_relaxed)) < num_regions) {
-        ShenandoahHeapRegion* r = heap->get_region(idx);
-        if (r->is_active() && !r->is_humongous_continuation()) {
-          HeapWord* tams = mark_context->top_at_mark_start(r);
-          HeapWord* top = r->top();
-          HeapWord* cur = tams;
-          while (cur < top) {
-            oop obj = cast_to_oop(cur);
-            if (obj->klass_or_null() == NULL) {
-              tty->print_cr("SHENANDOAH: NULL klass during above-TAMS scan at " PTR_FORMAT
-                             " region " SIZE_FORMAT " tams=" PTR_FORMAT " top=" PTR_FORMAT,
-                             p2i(cur), idx, p2i(tams), p2i(top));
-              break;
-            }
-            // Use bitmap as visited flag. First mark_strong succeeds, others are no-ops.
-            bool was_upgraded = false;
-            if (mark_context->mark_strong_in_bitmap(obj, was_upgraded)) {
-              bool pushed = q->push(ShenandoahMarkTask(obj, /* skip_live = */ true, /* weak = */ false));
-              assert(pushed, "overflow queue should always succeed pushing");
-            }
-            cur += obj->size();
-          }
-        }
-      }
     }
 
     _cm->mark_loop(worker_id, _terminator, rp,
@@ -314,13 +276,6 @@ void ShenandoahConcurrentMark::finish_mark() {
 }
 
 void ShenandoahConcurrentMark::finish_mark_work() {
-  // Without stack watermark barriers (ARM32), TLABs are not retired concurrently.
-  // Retire TLABs so their unused space is filled with fillers and they won't be
-  // reused (preventing races with concurrent heap iteration).
-  if (!ShenandoahStackWatermarkBarrier && UseTLAB) {
-    ShenandoahHeap::heap()->tlabs_retire(false);
-  }
-
   // Finally mark everything else we've got in our queues during the previous steps.
   // It does two different things for concurrent vs. mark-compact GC:
   // - For concurrent GC, it starts with empty task queues, drains the remaining

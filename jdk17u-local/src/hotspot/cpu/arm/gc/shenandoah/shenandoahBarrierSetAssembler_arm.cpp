@@ -67,33 +67,23 @@ void ShenandoahBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, Dec
         __ b(done, eq);
       }
 
-      // Save registers. addr and count must be in the saved set.
-      // The caller (stubGenerator_arm.cpp) always passes addr=to(R1), count=R2,
-      // and R0 contains the source address (from). callee_saved_regs >= 3, so
-      // R0-R2 are all in the saved set and will be restored after the call.
+      // Save all caller-saved registers including VFP D0-D7 so the C++
+      // arraycopy barrier cannot corrupt floating-point state.
+      // R0 (src), R1/addr (dst), R2/count are all caller-saved GPRs and are
+      // automatically preserved by push_call_clobbered_registers().
       assert(addr->encoding() < callee_saved_regs, "addr must be saved");
       assert(count->encoding() < callee_saved_regs, "count must be saved");
       assert(callee_saved_regs >= 3, "must save R0 (src), R1 (dst), R2 (count)");
-
-      RegisterSet saved_regs = RegisterSet(R0, as_Register(callee_saved_regs - 1));
-      __ push(saved_regs | R9ifScratched);
-
-      // Set up arguments for ShenandoahRuntime::arraycopy_barrier_oop_entry(src, dst, count).
-      // At entry: R0=from (src), addr=R1=to (dst), count=R2.
-      // We need: R0=src, R1=dst, R2=count.
-      // Since the caller always has R0=from, R1=to, R2=count already in the
-      // correct registers, no moves are needed in the common case.
-      // But be defensive in case the convention changes:
       assert(addr == R1, "arraycopy dst must be R1");
       assert(count == R2, "arraycopy count must be R2");
-      // R0 already holds src (from) — no move needed.
-      // R1 already holds dst (to/addr) — no move needed.
-      // R2 already holds count — no move needed.
 
-      // No UseCompressedOops on ARM32
+      __ push_call_clobbered_registers();
+
+      // R0=src, R1=dst, R2=count are already in the correct registers.
+      // No UseCompressedOops on ARM32.
       __ call(CAST_FROM_FN_PTR(address, ShenandoahRuntime::arraycopy_barrier_oop_entry));
 
-      __ pop(saved_regs | R9ifScratched);
+      __ pop_call_clobbered_registers();
       __ bind(done);
     }
   }
@@ -171,13 +161,14 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier_pre(MacroAssembler* masm,
 
   __ bind(runtime);
 
-  // save the live input values
-  if (store_addr != noreg) {
-    __ push(RegisterSet(store_addr) | RegisterSet(new_val));
-  } else {
-    __ push(pre_val);
-  }
+  // Save all caller-saved registers including VFP D0-D7.  We use
+  // push_call_clobbered_registers() so that the runtime call cannot corrupt
+  // any floating-point value that was live in the surrounding JIT code.
+  // The input registers (store_addr / new_val / pre_val) are among the
+  // caller-saved GPRs, so they are automatically preserved.
+  __ push_call_clobbered_registers();
 
+  // pre_val must be in R0 for the call.
   if (pre_val != R0) {
     __ mov(R0, pre_val);
   }
@@ -185,11 +176,7 @@ void ShenandoahBarrierSetAssembler::satb_write_barrier_pre(MacroAssembler* masm,
 
   __ call_VM_leaf(CAST_FROM_FN_PTR(address, ShenandoahRuntime::write_ref_field_pre_entry), R0, R1);
 
-  if (store_addr != noreg) {
-    __ pop(RegisterSet(store_addr) | RegisterSet(new_val));
-  } else {
-    __ pop(pre_val);
-  }
+  __ pop_call_clobbered_registers();
 
   __ bind(done);
 }
@@ -263,10 +250,11 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
   // Null check
   __ cbz(dst, done);
 
-  // Slow path: save registers, call runtime
-  // Runtime expects: R0 = oop, R1 = load address
-  const RegisterSet save_regs = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR);
-  __ push(save_regs | R9ifScratched);
+  // Slow path: save all caller-saved registers (GPRs + VFP D0-D7).
+  // push_call_clobbered_registers() pushes VFP first then GPRs, so the GPR
+  // save-slot offsets used by the result-patching code below are stable and
+  // start at SP+0 after the push (VFP is further down the stack).
+  __ push_call_clobbered_registers();
 
   // Fix #8D: Handle the case where dst == R1. The load_addr computation below
   // writes into R1, which would clobber dst before we copy it to R0.
@@ -333,13 +321,16 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
 
   __ bind(done_call);
 
-  // Result is in R0. We need to get it into original_dst, but pop(save_regs)
-  // will restore all of R0-R3 from the stack, overwriting any register we set.
-  // Solution: write the result into original_dst's save slot on the stack before popping.
+  // Result is in R0. We need to get it into original_dst, but pop_call_clobbered
+  // will restore R0-R3 from the stack, overwriting any register we set.
+  // Solution: write the result into original_dst's GPR save slot before popping.
   // We use original_dst (not dst) because dst may have been reassigned from R1 to R3
   // in the Fix #8D case; the pop will restore original_dst from its save slot.
-  // Stack layout (stmdb stores ascending regs at ascending addresses from SP):
+  //
+  // Stack layout after push_call_clobbered_registers():
   //   SP+0=R0, SP+4=R1, SP+8=R2, SP+12=R3, [SP+16=R9,] SP+N=R12, SP+N+4=LR
+  //   below LR: D0-D7 VFP save area (64 bytes when VFP present)
+  // GPR save slots start at SP+0 regardless of VFP.
   if (original_dst->encoding() <= 3) {
     // original_dst is R0-R3: update its save slot so pop restores the new value
     __ str(R0, Address(SP, original_dst->encoding() * wordSize));
@@ -357,16 +348,16 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
   }
   // else dst == R0 && encoding > 3 can't happen
 
-  __ pop(save_regs | R9ifScratched);
+  __ pop_call_clobbered_registers();
 
   __ bind(done);
 }
 
 void ShenandoahBarrierSetAssembler::iu_barrier(MacroAssembler* masm, Register dst, Register tmp) {
   if (ShenandoahIUBarrier) {
-    // Save and restore all caller-saved registers
-    const RegisterSet save_regs = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR);
-    __ push(save_regs | R9ifScratched);
+    // Save all caller-saved registers including VFP D0-D7, matching AArch64's
+    // push_call_clobbered_registers() pattern.
+    __ push_call_clobbered_registers();
 
     // satb_write_barrier_pre requires pre_val, tmp1, tmp2 to all be distinct.
     // If dst (pre_val) is R0 or Rtemp, it would conflict with our scratch regs.
@@ -376,7 +367,7 @@ void ShenandoahBarrierSetAssembler::iu_barrier(MacroAssembler* masm, Register ds
       __ mov(pre_val, dst);
     }
     satb_write_barrier_pre(masm, noreg, noreg, pre_val, Rtemp, R0);
-    __ pop(save_regs | R9ifScratched);
+    __ pop_call_clobbered_registers();
   }
 }
 
@@ -441,8 +432,7 @@ void ShenandoahBarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet d
 
   // 3: apply keep-alive barrier if needed
   if (ShenandoahBarrierSet::need_keep_alive_barrier(decorators, type)) {
-    const RegisterSet save_regs = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR);
-    __ push(save_regs | R9ifScratched);
+    __ push_call_clobbered_registers();
     Register keepalive_tmp1 = (tmp1 != noreg) ? tmp1 : Rtemp;
     Register keepalive_tmp2 = (tmp2 != noreg) ? tmp2 : ((dst != R0) ? R0 : R1);
     satb_write_barrier_pre(masm /* masm */,
@@ -451,7 +441,7 @@ void ShenandoahBarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet d
                            dst /* pre_val */,
                            keepalive_tmp1 /* tmp1 */,
                            keepalive_tmp2 /* tmp2 */);
-    __ pop(save_regs | R9ifScratched);
+    __ pop_call_clobbered_registers();
   }
 }
 
@@ -509,7 +499,12 @@ void ShenandoahBarrierSetAssembler::try_resolve_jobject_in_native(MacroAssembler
   Address gc_state(jni_env, ShenandoahThreadLocalData::gc_state_offset() - JavaThread::jni_environment_offset());
   __ ldrb(tmp, gc_state);
 
-  // Check for heap in evacuation phase
+  // Check for heap in evacuation phase.
+  // Note: we do NOT check for MARKING here, matching the AArch64 and x86 reference
+  // implementations.  A JNI object handle resolved during concurrent marking may hold
+  // a pre-value that has not yet been enqueued in the SATB queue, but the slow-path
+  // (BarrierSetAssembler::try_resolve_jobject_in_native) already handles the critical
+  // cases, and the SATB pre-barrier in the caller covers the rest.
   __ tst(tmp, ShenandoahHeap::EVACUATION);
   __ b(slowpath, ne);
 
@@ -522,6 +517,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
                                                   Register addr,
                                                   Register expected,
                                                   Register new_val,
+                                                  bool is_cae,
                                                   Register tmp1,
                                                   Register tmp2,
                                                   Register tmp3,
@@ -537,7 +533,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
     resolve_forward_pointer(masm, new_val, tmp1);
   }
 
-  Label step4, done, L_failure;
+  Label step4, done_step1, done_step3, L_failure, exit;
 
   // Step 1. Fast-path. Try to CAS with given arguments.
   // ARM32 ldrex/strex only provide atomicity, not ordering.
@@ -553,7 +549,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   // eq if CAS succeeded, ne if failed. tmp1 is scratched.
   __ atomic_cas_bool(expected, new_val, addr, 0, tmp1);
   // dmb does not clobber condition flags, so Z survives
-  __ b(done, eq);
+  __ b(done_step1, eq);
 
   // Step 2. CAS has failed. This may be a false negative.
   // The value read from memory is in expected (cmpxchg semantics put fetched value there
@@ -597,21 +593,47 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   // object as expected. Try CAS with the from-space pointer as expected.
   // Release fence already provided by step4's dmb on initial entry.
   __ atomic_cas_bool(tmp2, new_val, addr, 0, tmp3);
-  // If this also failed, another thread may have healed. Retry from step 1.
+  // If this CAS also fails, another thread may have healed the pointer.
+  // Retry from step 1 (via step4 which issues the release DMB).
+  // Note: no acquire fence is needed on this retry path — we are not consuming
+  // any data from the failing CAS result.  The DMB at step4 provides release
+  // before the next CAS attempt, and the DMB at done_step3/done_step1 provides
+  // acquire after success.  This matches AArch64's acquire-release semantics
+  // embedded per-attempt via ldaxr/stlxr.
   __ b(step4, ne);
 
-  // Success - fall through to done
-
-  __ bind(done);
-  // DMB for acquire semantics after successful CAS
+  // Step 3 success: in-memory value was tmp2 (from-space pointer of expected).
+  __ bind(done_step3);
   __ membar(MacroAssembler::Membar_mask_bits(MacroAssembler::LoadLoad | MacroAssembler::LoadStore), Rtemp);
-  // CAS succeeded
-  __ mov(result, 1);
-  Label exit;
+  if (is_cae) {
+    __ mov(result, tmp2);  // return the actual in-memory value that was swapped out
+  } else {
+    __ mov(result, 1);
+  }
+  __ b(exit);
+
+  // Step 1 success: in-memory value was expected.
+  __ bind(done_step1);
+  __ membar(MacroAssembler::Membar_mask_bits(MacroAssembler::LoadLoad | MacroAssembler::LoadStore), Rtemp);
+  if (is_cae) {
+    __ mov(result, expected);  // return the actual in-memory value that was swapped out
+  } else {
+    __ mov(result, 1);
+  }
   __ b(exit);
 
   __ bind(L_failure);
-  __ mov(result, 0);
+  // Invariant: tmp2 holds the last value loaded from addr (or 0 when reached via
+  // the null-check cbz path).  For is_cae=true, returning 0 (null) is semantically
+  // correct because the in-memory value IS null.  Note that tmp1 may be stale at
+  // this point (the mov(tmp1, tmp2) on the forwarding path runs before L_failure is
+  // reached via forwarding but NOT via the null-check path); tmp1 is not consumed
+  // at L_failure, so there is no bug — this comment documents the invariant.
+  if (is_cae) {
+    __ mov(result, tmp2);  // return the witness value (what is actually in memory)
+  } else {
+    __ mov(result, 0);
+  }
 
   __ bind(exit);
 }
@@ -710,7 +732,11 @@ void ShenandoahBarrierSetAssembler::generate_c1_pre_barrier_runtime_stub(StubAss
 
   __ set_info("shenandoah_pre_barrier_slow_id", false);
 
-  // Save registers that need saving if the runtime is called
+  // Save GPR caller-saved registers for the fast path.  VFP is NOT saved here:
+  // the fast path is a pure inline sequence that writes only to the SATB queue
+  // buffer and index (memory, not registers) and does NOT call into C++.
+  // Since no C++ function is invoked on the fast path, D0-D7 cannot be clobbered.
+  // The slow (runtime) path uses save_live_registers() which saves VFP there.
   const RegisterSet saved_regs = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR);
   const int nb_saved_regs = 6;
   assert(nb_saved_regs == saved_regs.size(), "fix nb_saved_regs");
@@ -774,16 +800,27 @@ void ShenandoahBarrierSetAssembler::generate_c1_load_reference_barrier_runtime_s
   bool is_phantom = ShenandoahBarrierSet::is_phantom_access(decorators);
   bool is_native  = ShenandoahBarrierSet::is_native_access(decorators);
 
-  // Save ALL caller-saved registers. We'll return the result via the
-  // parameter area to avoid clobbering any register the caller needs.
-  // The runtime entry is JRT_LEAF (no safepoint/GC), so no OopMap needed.
-  const RegisterSet save_regs = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR);
-  const RegisterSet all_save = save_regs | R9ifScratched;
-  __ push(all_save);
+  // Save ALL caller-saved registers (GPRs + VFP D0-D7) using the same helper
+  // as the other barrier paths.  push_call_clobbered_registers() pushes VFP
+  // first, then GPRs, so the GPR block sits at the top of the saved area.
+  //
+  // Stack layout after push_call_clobbered_registers():
+  //   SP+0               : R0  (lowest GPR encoding)
+  //   SP+4               : R1
+  //   SP+8               : R2
+  //   SP+12              : R3
+  //   SP+16[+4 if R9]    : R12
+  //   SP+20[+4 if R9]    : LR
+  //   [SP+24 if R9]      : R9  (when R9_IS_SCRATCHED)
+  //   below              : D0-D7  (64 bytes when VFP present)
+  //   original SP        : param[0] (obj), param[1] (addr)  -- stored by gen stub
+  //
+  // param_offset = total bytes pushed = GPR count * 4 + VFP bytes
+  const RegisterSet gpr_save = RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR) | R9ifScratched;
+  const int vfp_save_bytes = VM_Version::has_vfp() ? 8 * 8 : 0;
+  const int param_offset = gpr_save.size() * wordSize + vfp_save_bytes;
 
-  // Parameters were stored at the original SP by gen_load_reference_barrier_stub.
-  // After our push, they are at SP + save_count * wordSize.
-  const int param_offset = all_save.size() * wordSize;
+  __ push_call_clobbered_registers();
   __ ldr(R0, Address(SP, param_offset));              // obj
   __ ldr(R1, Address(SP, param_offset + wordSize));   // addr
 
@@ -797,11 +834,11 @@ void ShenandoahBarrierSetAssembler::generate_c1_load_reference_barrier_runtime_s
     __ call(CAST_FROM_FN_PTR(address, ShenandoahRuntime::load_reference_barrier_phantom));
   }
 
-  // Store result to the parameter area (first param slot).
+  // Store result to the parameter area (first param slot, at original SP).
   __ str(R0, Address(SP, param_offset));
 
-  // Restore ALL caller-saved registers (R0 gets its original pre-barrier value).
-  __ pop(all_save);
+  // Restore all caller-saved registers (including VFP).  After this SP == original SP.
+  __ pop_call_clobbered_registers();
 
   // Load the barrier result from the parameter area (now at SP + 0).
   __ ldr(R0, Address(SP, 0));

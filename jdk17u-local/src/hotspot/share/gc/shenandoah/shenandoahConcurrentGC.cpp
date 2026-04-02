@@ -546,6 +546,7 @@ void ShenandoahConcurrentGC::op_init_mark() {
   }
 
   ShenandoahStackWatermark::change_epoch_id();
+
   if (ShenandoahPacing) {
     heap->pacer()->setup_for_mark();
   }

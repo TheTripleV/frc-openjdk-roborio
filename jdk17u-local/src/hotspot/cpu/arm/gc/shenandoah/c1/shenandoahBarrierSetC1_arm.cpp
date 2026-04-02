@@ -42,9 +42,15 @@ void LIR_OpShenandoahCompareAndSwap::emit_code(LIR_Assembler* masm) {
 
   ShenandoahBarrierSet::assembler()->iu_barrier(masm->masm(), newval, tmp2);
 
-  // No UseCompressedOops on ARM32
-
+  // No UseCompressedOops on ARM32.
+  // cmpxchg_oop requires four temporaries: tmp1, tmp2, tmp3, result.
+  // tmp1 and tmp2 come from the LIR allocator via _tmp1/_tmp2.
+  // tmp3 is Rtemp (R12), the ARM32 intra-procedure scratch register which is
+  // architecturally reserved and never allocated by the C1 LIR register allocator,
+  // so using it inline here is safe — it cannot conflict with any live LIR virtual
+  // register at this point.
   ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm->masm(), addr, cmpval, newval,
+                                                   /*is_cae*/false,
                                                    tmp1, tmp2, Rtemp, result);
 }
 

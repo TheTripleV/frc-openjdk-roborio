@@ -79,7 +79,7 @@ public:
                                              Register obj, Register tmp, Label& slowpath);
 
   void cmpxchg_oop(MacroAssembler* masm, Register addr, Register expected, Register new_val,
-                   Register tmp1, Register tmp2, Register tmp3, Register result);
+                   bool is_cae, Register tmp1, Register tmp2, Register tmp3, Register result);
 };
 
 #endif // CPU_ARM_GC_SHENANDOAH_SHENANDOAHBARRIERSETASSEMBLER_ARM_HPP

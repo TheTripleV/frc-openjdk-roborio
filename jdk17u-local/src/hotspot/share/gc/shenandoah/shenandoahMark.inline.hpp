@@ -72,18 +72,12 @@ void ShenandoahMark::do_task(ShenandoahObjToScanQueue* q, T* cl, ShenandoahLiveD
     return;
   }
 
-  // Fix 8: Verify klass pointer is in metaspace before dereferencing.
-  // Interior/derived pointers (from OopMap bugs, SATB races, or stale refs on ARM32)
-  // can have klass fields that point into heap data or arbitrary memory.
-  // Metaspace::contains() rejects heap addresses that would pass is_readable_pointer().
-  {
-    Klass* k = obj->klass_or_null_acquire();
-    if (!Metaspace::contains(k)) {
-      log_debug(gc)("Shenandoah: do_task: klass " PTR_FORMAT " not in metaspace for oop " PTR_FORMAT " - skipping",
-                      p2i(k), p2i(obj));
-      return;
-    }
-  }
+  // Fix #11: Removed the Metaspace::contains() check that was here (old "Fix 8").
+  // That check silently dropped valid oops whose klass pointer failed the
+  // Metaspace::contains() test. This prevents tracing the object's fields,
+  // causing transitively-reachable objects to not get marked, which leads to
+  // ShenandoahVerify failures ("Must be marked in complete bitmap") and crashes.
+  // The is_in() + klass_or_null_acquire() checks above are sufficient.
 
   shenandoah_assert_not_forwarded(NULL, obj);
   shenandoah_assert_marked(NULL, obj);
@@ -307,18 +301,6 @@ inline void ShenandoahMark::mark_through_ref(T* p, ShenandoahObjToScanQueue* q, 
     if (marked) {
       bool pushed = q->push(ShenandoahMarkTask(obj, skip_live, weak));
       assert(pushed, "overflow queue should always succeed pushing");
-    } else if (!ShenandoahStackWatermarkBarrier && mark_context->allocated_after_mark_start(obj)) {
-      // Without stack watermark barriers, objects allocated after mark start
-      // (above TAMS) are implicitly marked but their fields may not have been
-      // scanned. When we discover such an object through a reference, we must
-      // push it to the queue so its fields get traced. Use the bitmap's
-      // mark_strong as a "visited" flag — for above-TAMS objects the bitmap
-      // is normally untouched, so first mark_strong will succeed.
-      bool was_upgraded = false;
-      if (mark_context->mark_strong_in_bitmap(obj, was_upgraded)) {
-        bool pushed = q->push(ShenandoahMarkTask(obj, /* skip_live = */ true, weak));
-        assert(pushed, "overflow queue should always succeed pushing");
-      }
     }
 
     shenandoah_assert_marked(p, obj);

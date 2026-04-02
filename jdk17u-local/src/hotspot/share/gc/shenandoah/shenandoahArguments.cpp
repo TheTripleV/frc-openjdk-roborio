@@ -41,11 +41,13 @@ void ShenandoahArguments::initialize() {
 
 #ifdef ARM32
   // ARM32 Shenandoah runs with full concurrent barriers enabled for low pause times.
-  // C2 barrier verification is disabled as ARM32 typically runs C1-only.
+  // Stack watermark barriers are enabled: ShenandoahStackWatermark processes frames
+  // lazily during concurrent mark (keep-alive closure) and during concurrent
+  // evacuation (evacuate+update closure), matching the AArch64 behaviour.
+  // C2 barrier verification is disabled as ARM32 runs C1-only.
 #ifdef ASSERT
   FLAG_SET_DEFAULT(ShenandoahVerifyOptoBarriers,     false);
 #endif
-  // ARM32 now supports stack watermark barriers (frame_arm.cpp::sender_raw + on_iteration).
 #endif
   if (UseLargePages) {
     size_t large_page_size = os::large_page_size();

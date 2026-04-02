@@ -1145,6 +1145,27 @@ FixedSizeCodeBlock::~FixedSizeCodeBlock() {
 
 
 // Serializes memory. Potentially blows flags and reg.
+// Save all registers that a C ABI call may clobber (caller-saved set).
+// Volatile GPRs: R0-R3, R12 (Rtemp), LR, and R9 when R9_IS_SCRATCHED.
+// Volatile VFP:  D0-D7 (when VFP is present at stub generation time).
+// VFP regs are pushed first so that GPR save-slot offsets (used by callers
+// that patch the stack to return values) remain the same as when only GPRs
+// are saved.  pop_call_clobbered_registers() must be called in the reverse
+// order: pop GPRs first, then pop VFP.
+void MacroAssembler::push_call_clobbered_registers() {
+  if (VM_Version::has_vfp()) {
+    fpush(FloatRegisterSet(D0, 8)); // D0-D7: 8 volatile double regs
+  }
+  push(RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR) | R9ifScratched);
+}
+
+void MacroAssembler::pop_call_clobbered_registers() {
+  pop(RegisterSet(R0, R3) | RegisterSet(R12) | RegisterSet(LR) | R9ifScratched);
+  if (VM_Version::has_vfp()) {
+    fpop(FloatRegisterSet(D0, 8)); // restore D0-D7
+  }
+}
+
 // tmp is a scratch for v6 co-processor write op (could be noreg for other architecure versions)
 // preserve_flags takes a longer path in LoadStore case (dmb rather then control dependency) to preserve status flags. Optional.
 // load_tgt is an ordered load target in a LoadStore case only, to create dependency between the load operation and conditional branch. Optional.

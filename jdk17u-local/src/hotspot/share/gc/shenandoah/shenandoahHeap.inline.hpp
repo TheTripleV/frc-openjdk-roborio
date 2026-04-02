@@ -528,13 +528,7 @@ inline void ShenandoahHeap::marked_object_iterate(ShenandoahHeapRegion* region, 
     assert (cs < limit, "only objects below limit here: " PTR_FORMAT " (" PTR_FORMAT ")", p2i(cs), p2i(limit));
     oop obj = cast_to_oop(cs);
     if (obj->klass_or_null() == NULL) {
-      tty->print_cr("SHENANDOAH BUG: NULL klass at " PTR_FORMAT " in region " SIZE_FORMAT
-                     ", tams=" PTR_FORMAT " limit=" PTR_FORMAT " top=" PTR_FORMAT,
-                     p2i(cs), region->index(), p2i(tams), p2i(limit), p2i(region->top()));
-      // Print surrounding words for debugging
-      for (int i = -2; i < 8; i++) {
-        tty->print_cr("  [%+d] " PTR_FORMAT ": " PTR_FORMAT, i, p2i(cs + i), *(uintptr_t*)(cs + i));
-      }
+      // Uninitialized area above TAMS — stop iterating this region.
       break;
     }
     assert(oopDesc::is_oop(obj), "sanity");

@@ -444,6 +444,14 @@ public:
 #endif
   }
 
+  // Save/restore all registers that a C ABI call may clobber (caller-saved).
+  // On ARM32 these are: R0-R3, R12 (Rtemp), LR, R9 (if scratched), and the
+  // VFP volatile double registers D0-D7 (when VFP is present).
+  // This mirrors AArch64's push_call_clobbered_registers() so that Shenandoah
+  // barrier stubs can use a single helper instead of open-coding register saves.
+  void push_call_clobbered_registers();
+  void pop_call_clobbered_registers();
+
   // Order access primitives
   enum Membar_mask_bits {
     StoreStore = 1 << 3,
