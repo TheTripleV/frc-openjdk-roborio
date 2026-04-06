@@ -100,6 +100,11 @@ inline void ShenandoahHeap::update_with_forwarded(T* p) {
   T o = RawAccess<>::oop_load(p);
   if (!CompressedOops::is_null(o)) {
     oop obj = CompressedOops::decode_not_null(o);
+    // ARM32 fix: validate that obj is within the heap before checking
+    // in_collection_set. A field in a recycled region can contain garbage.
+    if (!is_in(obj)) {
+      return;
+    }
     if (in_collection_set(obj)) {
       // Corner case: when evacuation fails, there are objects in collection
       // set that are not really forwarded. We can still go and try and update them
@@ -119,6 +124,13 @@ inline void ShenandoahHeap::conc_update_with_forwarded(T* p) {
   T o = RawAccess<>::oop_load(p);
   if (!CompressedOops::is_null(o)) {
     oop obj = CompressedOops::decode_not_null(o);
+    // ARM32 fix: validate that obj is within the heap before checking
+    // in_collection_set. During aggressive mode, a field in a recycled
+    // region can contain garbage that decodes to an address outside the
+    // heap, causing an out-of-bounds access on the biased cset map.
+    if (!is_in(obj)) {
+      return;
+    }
     if (in_collection_set(obj)) {
       // Corner case: when evacuation fails, there are objects in collection
       // set that are not really forwarded. We can still go and try CAS-update them

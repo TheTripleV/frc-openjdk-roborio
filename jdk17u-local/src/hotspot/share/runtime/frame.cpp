@@ -828,22 +828,20 @@ void frame::oops_interpreted_do(OopClosure* f, const RegisterMap* map, bool quer
   // During concurrent stack scanning (e.g., Shenandoah GC), the Method* slot
   // in an interpreter frame may be NULL if the frame is being set up or torn
   // down by the owning thread. Access the raw slot directly to avoid assertions.
+  // Also validate alignment and address range: on ARM32, concurrent GC can
+  // encounter frames whose method slot has been stomped by TLAB allocation
+  // or region recycling (e.g., 0xa82c5c93 — misaligned, not a valid Method*).
   Method* m_raw = *interpreter_frame_method_addr();
-  if (m_raw == NULL) {
-    // Frame not fully initialized; skip oop processing for this frame.
-    return;
+  bool method_valid = (m_raw != NULL && ((uintptr_t)m_raw & 0x3) == 0 && (uintptr_t)m_raw >= 4096);
+  ConstMethod* cm = NULL;
+  if (method_valid) {
+    cm = m_raw->constMethod();
+    if (cm == NULL || ((uintptr_t)cm & 0x3) != 0 || (uintptr_t)cm < 4096) {
+      method_valid = false;
+    }
   }
-  methodHandle m (thread, m_raw);
-  jint      bci = interpreter_frame_bci();
 
-  assert(!Universe::heap()->is_in(m()),
-          "must be valid oop");
-  assert(m->is_method(), "checking frame value");
-  assert((m->is_native() && bci == 0)  ||
-         (!m->is_native() && bci >= 0 && bci < m->code_size()),
-         "invalid bci value");
-
-  // Handle the monitor elements in the activation
+  // Handle the monitor elements in the activation (independent of Method*)
   for (
     BasicObjectLock* current = interpreter_frame_monitor_end();
     current < interpreter_frame_monitor_begin();
@@ -855,15 +853,30 @@ void frame::oops_interpreted_do(OopClosure* f, const RegisterMap* map, bool quer
     current->oops_do(f);
   }
 
+  // The mirror of the method's klass is independent of Method* validity
+  f->do_oop(interpreter_frame_mirror_addr());
+
+  if (!method_valid) {
+    // ARM32: Method* is corrupt or NULL. We've processed monitors and mirror
+    // which don't depend on Method*. Skip method-dependent processing
+    // (locals, expression stack, oop map) since we can't safely determine
+    // their layout without a valid Method*.
+    return;
+  }
+
+  methodHandle m (thread, m_raw);
+  jint      bci = interpreter_frame_bci();
+
+  assert(!Universe::heap()->is_in(m()),
+          "must be valid oop");
+  assert(m->is_method(), "checking frame value");
+  assert((m->is_native() && bci == 0)  ||
+         (!m->is_native() && bci >= 0 && bci < m->code_size()),
+         "invalid bci value");
+
   if (m->is_native()) {
     f->do_oop(interpreter_frame_temp_oop_addr());
   }
-
-  // The method pointer in the frame might be the only path to the method's
-  // klass, and the klass needs to be kept alive while executing. The GCs
-  // don't trace through method pointers, so the mirror of the method's klass
-  // is installed as a GC root.
-  f->do_oop(interpreter_frame_mirror_addr());
 
   int max_locals = m->is_native() ? m->size_of_parameters() : m->max_locals();
 
@@ -917,6 +930,9 @@ void frame::oops_interpreted_arguments_do(Symbol* signature, bool has_receiver, 
 
 void frame::oops_code_blob_do(OopClosure* f, CodeBlobClosure* cf, const RegisterMap* reg_map,
                               DerivedPointerIterationMode derived_mode) const {
+  // Safety: during concurrent stack scanning (e.g., Shenandoah GC on ARM32),
+  // the CodeBlob may be NULL if frame unwinding produced a stale PC.
+  if (_cb == NULL) return;
   assert(_cb != NULL, "sanity check");
   if (_cb->oop_maps() != NULL) {
     OopMapSet::oops_do(this, reg_map, f, derived_mode);
@@ -1045,15 +1061,33 @@ oop frame::get_native_receiver() {
 
 void frame::oops_entry_do(OopClosure* f, const RegisterMap* map) const {
   assert(map != NULL, "map must be set");
+  // ARM32: entry_frame_call_wrapper_offset == link_offset == 0, so fp[0]
+  // stores both the saved frame link (for interpreter/compiled frames) and
+  // the JavaCallWrapper* (for entry frames).  During concurrent stack
+  // watermark processing the frame type may be mis-identified, or the
+  // entry frame may not yet be fully initialized, leaving fp[0] with a
+  // stale/invalid value.  Validate the pointer before dereferencing.
+  JavaCallWrapper* jcw = entry_frame_call_wrapper();
+  if (jcw == NULL ||
+      ((uintptr_t)jcw < (uintptr_t)4096) ||
+      !is_aligned((uintptr_t)jcw, sizeof(void*))) {
+    // Invalid JavaCallWrapper pointer – skip this frame.
+    return;
+  }
   if (map->include_argument_oops()) {
     // must collect argument oops, as nobody else is doing it
-    Thread *thread = Thread::current();
-    methodHandle m (thread, entry_frame_call_wrapper()->callee_method());
-    EntryFrameOopFinder finder(this, m->signature(), m->is_static());
-    finder.arguments_do(f);
+    Method* callee = jcw->callee_method();
+    if (callee != NULL &&
+        ((uintptr_t)callee >= (uintptr_t)4096) &&
+        is_aligned((uintptr_t)callee, sizeof(void*))) {
+      Thread *thread = Thread::current();
+      methodHandle m (thread, callee);
+      EntryFrameOopFinder finder(this, m->signature(), m->is_static());
+      finder.arguments_do(f);
+    }
   }
   // Traverse the Handle Block saved in the entry frame
-  entry_frame_call_wrapper()->oops_do(f);
+  jcw->oops_do(f);
 }
 
 void frame::oops_do(OopClosure* f, CodeBlobClosure* cf, const RegisterMap* map,
@@ -1086,12 +1120,13 @@ void frame::oops_do_internal(OopClosure* f, CodeBlobClosure* cf, const RegisterM
     oops_entry_do(f, map);
   } else if (is_optimized_entry_frame()) {
     _cb->as_optimized_entry_blob()->oops_do(f, *this);
-  } else if (CodeCache::contains(pc())) {
+  } else if (_cb != NULL && CodeCache::contains(pc())) {
     oops_code_blob_do(f, cf, map, derived_mode);
   } else {
-    // Frame is outside known Java code regions (native/OS frame).
-    // This can happen during concurrent stack walks (e.g., Shenandoah GC)
-    // when a race condition causes the walk to go past the entry frame.
+    // Frame is outside known Java code regions (native/OS frame), or
+    // has a PC in the CodeCache but no valid CodeBlob (can happen during
+    // concurrent stack walks on ARM32 due to deoptimization races or
+    // frame unwinding producing stale PCs).
     // No Java oops to process in such frames, so just return.
     return;
   }

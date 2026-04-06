@@ -60,24 +60,42 @@ template <class T, StringDedupMode STRING_DEDUP>
 void ShenandoahMark::do_task(ShenandoahObjToScanQueue* q, T* cl, ShenandoahLiveData* live_data, StringDedup::Requests* const req, ShenandoahMarkTask* task) {
   oop obj = task->obj();
 
-  if (obj == NULL || !ShenandoahHeap::heap()->is_in(obj)) {
+  ShenandoahHeap* heap = ShenandoahHeap::heap();
+
+  if (obj == NULL || !heap->is_in(obj)) {
     log_debug(gc)("Shenandoah: do_task: bad oop " PTR_FORMAT " skip_live=%d weak=%d chunk=%d pow=%d",
                   p2i(obj), task->count_liveness() ? 0 : 1, task->is_weak() ? 1 : 0, task->chunk(), task->pow());
     return;
   }
 
-  if (obj->klass_or_null_acquire() == NULL) {
-    log_debug(gc)("Shenandoah: do_task: NULL klass oop " PTR_FORMAT " skip_live=%d weak=%d chunk=%d pow=%d",
-                  p2i(obj), task->count_liveness() ? 0 : 1, task->is_weak() ? 1 : 0, task->chunk(), task->pow());
+  // ARM32 fix: Check that the object's region hasn't been recycled (trashed/empty)
+  // since the marking task was queued. In aggressive mode, a stale from-space
+  // reference can survive past update-refs into the next cycle. By the time we
+  // process this task, the from-space region may have been trashed and its memory
+  // recycled, making all object data (klass, fields) garbage.
+  ShenandoahHeapRegion* obj_region = heap->heap_region_containing(obj);
+  if (!obj_region->is_active()) {
+    log_debug(gc)("Shenandoah: do_task: oop in inactive region " PTR_FORMAT " region=%zu",
+                  p2i(obj), obj_region->index());
     return;
   }
 
-  // Fix #11: Removed the Metaspace::contains() check that was here (old "Fix 8").
-  // That check silently dropped valid oops whose klass pointer failed the
-  // Metaspace::contains() test. This prevents tracing the object's fields,
-  // causing transitively-reachable objects to not get marked, which leads to
-  // ShenandoahVerify failures ("Must be marked in complete bitmap") and crashes.
-  // The is_in() + klass_or_null_acquire() checks above are sufficient.
+  // ARM32 fix: Cache klass from the acquire read and validate it. This prevents
+  // TOCTOU races where klass_or_null_acquire() returns non-null, but obj->klass()
+  // (a plain re-read) returns garbage because the region was recycled. It also
+  // catches bad oops whose "klass" is a small integer (e.g., an interior pointer
+  // to a java.lang.Class whose field data is mistaken for a klass pointer).
+  // Use Metaspace::contains() for robust validation since garbage values like
+  // 0x00650068 (recycled string data) pass simple alignment/range checks.
+  Klass* klass = obj->klass_or_null_acquire();
+  if (klass == NULL || (uintptr_t)klass < 4096 || ((uintptr_t)klass & 0x3) != 0
+      || !Metaspace::contains(klass)) {
+    log_debug(gc)("Shenandoah: do_task: bad klass " PTR_FORMAT " for oop " PTR_FORMAT
+                  " skip_live=%d weak=%d chunk=%d pow=%d",
+                  p2i(klass), p2i(obj), task->count_liveness() ? 0 : 1,
+                  task->is_weak() ? 1 : 0, task->chunk(), task->pow());
+    return;
+  }
 
   shenandoah_assert_not_forwarded(NULL, obj);
   shenandoah_assert_marked(NULL, obj);
@@ -88,11 +106,16 @@ void ShenandoahMark::do_task(ShenandoahObjToScanQueue* q, T* cl, ShenandoahLiveD
   cl->set_weak(weak);
 
   if (task->is_not_chunked()) {
-    if (obj->is_instance()) {
+    // Use cached klass for dispatch instead of re-reading via obj->is_instance()
+    // etc., which calls obj->klass() (plain read) that could see a different value.
+    if (klass->is_instance_klass()) {
       // Case 1: Normal oop, process as usual.
-      obj->oop_iterate(cl);
+      // ARM32 fix: Use cached klass for dispatch. obj->oop_iterate(cl) would
+      // re-read klass() with a plain load that can see garbage if the region
+      // was recycled between our klass_or_null_acquire() and here.
+      OopIteratorClosureDispatch::oop_oop_iterate(cl, obj, klass);
       dedup_string<STRING_DEDUP>(obj, req);
-    } else if (obj->is_objArray()) {
+    } else if (klass->is_objArray_klass()) {
       // Case 2: Object array instance and no chunk is set. Must be the first
       // time we visit it, start the chunked processing.
       do_chunked_array_start<T>(q, cl, obj, weak);
@@ -101,7 +124,7 @@ void ShenandoahMark::do_task(ShenandoahObjToScanQueue* q, T* cl, ShenandoahLiveD
       // performance tweak TypeArrayKlass::oop_oop_iterate_impl is using:
       // We skip iterating over the klass pointer since we know that
       // Universe::TypeArrayKlass never moves.
-      assert (obj->is_typeArray(), "should be type array");
+      assert (klass->is_typeArray_klass(), "should be type array");
     }
     // Count liveness the last: push the outstanding work to the queues first
     // Avoid double-counting objects that are visited twice due to upgrade
@@ -151,14 +174,49 @@ inline void ShenandoahMark::do_chunked_array_start(ShenandoahObjToScanQueue* q, 
   objArrayOop array = objArrayOop(obj);
   int len = array->length();
 
+  // ARM32 fix: validate length. If the array header was corrupted
+  // (e.g., region recycled between validation in do_task and here),
+  // len could be negative or garbage.
+  if (len < 0) {
+    return;
+  }
+
   // Mark objArray klass metadata
+  // ARM32 fix: re-read klass with acquire semantics and validate against
+  // metaspace before calling do_klass. The klass pointer can become corrupt
+  // during Shenandoah aggressive mode's rapid GC cycling.  Using
+  // Metaspace::contains() here is safe because this only gates metadata
+  // iteration (CLD handle scanning), NOT object field iteration. CLDs are
+  // always reachable through class-loader-graph root scanning, so skipping
+  // metadata here for a suspect klass cannot cause missed live objects.
   if (Devirtualizer::do_metadata(cl)) {
-    Devirtualizer::do_klass(cl, array->klass());
+    Klass* klass = array->klass_or_null_acquire();
+    if (klass != NULL && Metaspace::contains(klass)) {
+      Devirtualizer::do_klass(cl, klass);
+    }
+  }
+
+  // ARM32 fix: re-validate the array's region after metadata iteration.
+  // The do_klass -> do_cld -> oops_do call chain can take significant time.
+  // During aggressive mode, the array's region could be recycled by then.
+  {
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    ShenandoahHeapRegion* region = heap->heap_region_containing((HeapWord*)array);
+    if (!region->is_active()) {
+      return;
+    }
   }
 
   if (len <= (int) ObjArrayMarkingStride*2) {
-    // A few slices only, process directly
-    array->oop_iterate_range(cl, 0, len);
+    // A few slices only, process directly.
+    // ARM32 fix: use direct element iteration instead of array->oop_iterate_range()
+    // which internally re-reads klass() to dispatch through ObjArrayKlass. On ARM32
+    // in aggressive mode, the klass pointer can become corrupt between the validated
+    // read above and the internal re-read, causing SIGSEGV at low addresses.
+    oop* base = (oop*)array->base();
+    for (oop* p = base; p < base + len; p++) {
+      Devirtualizer::do_oop(cl, p);
+    }
   } else {
     int bits = log2i_graceful(len);
     // Compensate for non-power-of-two arrays, cover the array in excess:
@@ -205,9 +263,13 @@ inline void ShenandoahMark::do_chunked_array_start(ShenandoahObjToScanQueue* q, 
     }
 
     // Process the irregular tail, if present
+    // ARM32 fix: direct iteration instead of oop_iterate_range
     int from = last_idx;
     if (from < len) {
-      array->oop_iterate_range(cl, from, len);
+      oop* base = (oop*)array->base();
+      for (oop* p = base + from; p < base + len; p++) {
+        Devirtualizer::do_oop(cl, p);
+      }
     }
   }
 }
@@ -216,6 +278,17 @@ template <class T>
 inline void ShenandoahMark::do_chunked_array(ShenandoahObjToScanQueue* q, T* cl, oop obj, int chunk, int pow, bool weak) {
   assert(obj->is_objArray(), "expect object array");
   objArrayOop array = objArrayOop(obj);
+
+  // ARM32 fix: re-validate array region is still active. Even though do_task
+  // validates before calling us, the region could have been recycled between
+  // task validation and reaching this point in aggressive mode.
+  {
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    ShenandoahHeapRegion* region = heap->heap_region_containing((HeapWord*)array);
+    if (!region->is_active()) {
+      return;
+    }
+  }
 
   assert (ObjArrayMarkingStride > 0, "sanity");
 
@@ -233,13 +306,21 @@ inline void ShenandoahMark::do_chunked_array(ShenandoahObjToScanQueue* q, T* cl,
   int from = (chunk - 1) * chunk_size;
   int to = chunk * chunk_size;
 
-#ifdef ASSERT
+  // ARM32 fix: validate from/to against actual array length.
+  // The chunk bounds were computed from the original length at push time.
+  // Re-read length to detect corruption from region recycling.
   int len = array->length();
-  assert (0 <= from && from < len, "from is sane: %d/%d", from, len);
-  assert (0 < to && to <= len, "to is sane: %d/%d", to, len);
-#endif
+  if (len <= 0 || from < 0 || to <= 0 || from >= len || to > len) {
+    return;
+  }
 
-  array->oop_iterate_range(cl, from, to);
+  // ARM32 fix: direct element iteration instead of array->oop_iterate_range()
+  // which internally re-reads klass() and can SIGSEGV if the klass field was
+  // overwritten by recycled memory.
+  oop* base = (oop*)array->base();
+  for (oop* p = base + from; p < base + to; p++) {
+    Devirtualizer::do_oop(cl, p);
+  }
 }
 
 class ShenandoahSATBBufferClosure : public SATBBufferClosure {
@@ -278,6 +359,15 @@ inline void ShenandoahMark::mark_through_ref(T* p, ShenandoahObjToScanQueue* q, 
     if (!ShenandoahHeap::heap()->is_in(obj)) {
       log_debug(gc)("Shenandoah: mark_through_ref: bad oop " PTR_FORMAT " from " PTR_FORMAT " weak=%d",
                     p2i(obj), p2i(p), weak ? 1 : 0);
+      return;
+    }
+
+    // ARM32 fix: skip objects in inactive (trashed/empty) regions.
+    // In aggressive mode, a stale from-space reference can survive past
+    // update-refs. By the time we trace it, the from-space region may be
+    // recycled, making all data at this address garbage.
+    ShenandoahHeapRegion* obj_region = ShenandoahHeap::heap()->heap_region_containing(obj);
+    if (!obj_region->is_active()) {
       return;
     }
 

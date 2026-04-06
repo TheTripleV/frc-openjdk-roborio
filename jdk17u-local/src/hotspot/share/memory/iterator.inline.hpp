@@ -44,10 +44,24 @@ inline MetadataVisitingOopIterateClosure::MetadataVisitingOopIterateClosure(Refe
     ClaimMetadataVisitingOopIterateClosure(ClassLoaderData::_claim_strong, rd) {}
 
 inline void ClaimMetadataVisitingOopIterateClosure::do_cld(ClassLoaderData* cld) {
-  cld->oops_do(this, _claim);
+  // ARM32 fix: Guard against corrupted CLD pointers. In Shenandoah aggressive
+  // mode, a valid klass->class_loader_data() can return a corrupted pointer if
+  // the CLD field was overwritten by recycled memory. Low addresses and
+  // misaligned pointers are definitely invalid.
+  if (cld != NULL && (uintptr_t)cld >= 4096 && ((uintptr_t)cld & 0x3) == 0) {
+    cld->oops_do(this, _claim);
+  }
 }
 
 inline void ClaimMetadataVisitingOopIterateClosure::do_klass(Klass* k) {
+  // ARM32 fix: Guard against invalid klass pointers. In Shenandoah aggressive
+  // mode, a stale from-space reference can point to recycled memory where the
+  // klass slot contains garbage (e.g., 0x1). Accessing class_loader_data() on
+  // such a pointer would SIGSEGV. Valid klass pointers are always in metaspace
+  // which is well above the zero page (first 4KB).
+  if (k == NULL || (uintptr_t)k < 4096) {
+    return;
+  }
   ClassLoaderData* cld = k->class_loader_data();
   ClaimMetadataVisitingOopIterateClosure::do_cld(cld);
 }

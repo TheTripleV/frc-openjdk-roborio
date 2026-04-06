@@ -83,6 +83,8 @@ import java.util.concurrent.locks.*;
 public class TestVerifyJCStress {
 
     public static void main(String[] args) throws Exception {
+        int outerCount = Integer.getInteger("outerCount", 10000);
+        int innerCount = Integer.getInteger("innerCount", 10000);
         ExecutorService service = Executors.newFixedThreadPool(
                 2,
                 r -> {
@@ -92,8 +94,8 @@ public class TestVerifyJCStress {
                 }
         );
 
-        for (int c = 0; c < 10000; c++) {
-            final Test[] tests = new Test[10000];
+        for (int c = 0; c < outerCount; c++) {
+            final Test[] tests = new Test[innerCount];
             for (int t = 0; t < tests.length; t++) {
                 tests[t] = new Test();
             }
