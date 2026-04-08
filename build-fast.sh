@@ -88,6 +88,7 @@ MSYS_NO_PATHCONV=1 docker exec "$CONTAINER_NAME" bash -c "\
     tar czf data.tar.gz --transform 's,^jre,usr/local/frc/JRE,' --owner=root --group=root jre && \
     tar czf control.tar.gz control postinst prerm && \
     echo 2.0 > debian-binary && \
-    ar r /artifacts/\${IPK_NAME} control.tar.gz data.tar.gz debian-binary"
+    rm -f /artifacts/\${IPK_NAME} && \
+    ar r /artifacts/\${IPK_NAME} debian-binary control.tar.gz data.tar.gz"
 
 echo "Build completed in ${SECONDS}s"

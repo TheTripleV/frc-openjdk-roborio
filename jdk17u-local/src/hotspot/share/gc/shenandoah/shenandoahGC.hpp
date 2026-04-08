@@ -60,7 +60,14 @@ public:
   static const char* degen_point_to_string(ShenandoahDegenPoint point);
 
 protected:
+  // Update roots for full-GC or degenerated-GC (asserts gc mode).
   static void update_roots(bool full_gc);
+  // Update roots for any GC phase, using a phase identifier passed as int.
+  // This overload is intended for concurrent GC during final-update-refs.
+  // Caller must cast ShenandoahPhaseTimings::Phase to int at the call site
+  // to avoid including shenandoahPhaseTimings.hpp (which drags in JFR events)
+  // into every file that includes shenandoahGC.hpp.
+  static void update_roots(int phase_as_int, bool check_alive);
 };
 
 #endif  // SHARE_GC_SHENANDOAH_SHENANDOAHGC_HPP

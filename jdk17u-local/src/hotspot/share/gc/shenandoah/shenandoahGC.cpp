@@ -78,17 +78,10 @@ public:
   }
 };
 
-void ShenandoahGC::update_roots(bool full_gc) {
+void ShenandoahGC::update_roots(int phase_as_int, bool check_alive) {
   assert(ShenandoahSafepoint::is_at_shenandoah_safepoint(), "Must be at a safepoint");
-  assert(ShenandoahHeap::heap()->is_full_gc_in_progress() ||
-         ShenandoahHeap::heap()->is_degenerated_gc_in_progress(),
-         "Only for degenerated GC and full GC");
 
-  bool check_alive = !full_gc;
-  ShenandoahPhaseTimings::Phase p = full_gc ?
-                                    ShenandoahPhaseTimings::full_gc_update_roots :
-                                    ShenandoahPhaseTimings::degen_gc_update_roots;
-
+  ShenandoahPhaseTimings::Phase p = (ShenandoahPhaseTimings::Phase) phase_as_int;
   ShenandoahGCPhase phase(p);
 #if COMPILER2_OR_JVMCI
   DerivedPointerTable::clear();
@@ -99,10 +92,23 @@ void ShenandoahGC::update_roots(bool full_gc) {
   uint nworkers = workers->active_workers();
 
   ShenandoahRootUpdater root_updater(nworkers, p);
-  ShenandoahUpdateRootsTask update_roots(&root_updater, check_alive);
-  workers->run_task(&update_roots);
+  ShenandoahUpdateRootsTask update_roots_task(&root_updater, check_alive);
+  workers->run_task(&update_roots_task);
 
 #if COMPILER2_OR_JVMCI
   DerivedPointerTable::update_pointers();
 #endif
+}
+
+void ShenandoahGC::update_roots(bool full_gc) {
+  assert(ShenandoahSafepoint::is_at_shenandoah_safepoint(), "Must be at a safepoint");
+  assert(ShenandoahHeap::heap()->is_full_gc_in_progress() ||
+         ShenandoahHeap::heap()->is_degenerated_gc_in_progress(),
+         "Only for degenerated GC and full GC");
+
+  bool check_alive = !full_gc;
+  ShenandoahPhaseTimings::Phase p = full_gc ?
+                                    ShenandoahPhaseTimings::full_gc_update_roots :
+                                    ShenandoahPhaseTimings::degen_gc_update_roots;
+  update_roots((int)p, check_alive);
 }

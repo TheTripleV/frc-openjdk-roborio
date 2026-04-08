@@ -108,6 +108,8 @@ class outputStream;
                                                                                        \
   f(final_update_refs_gross,                        "Pause Final Update Refs (G)")     \
   f(final_update_refs,                              "Pause Final Update Refs (N)")     \
+  f(final_update_refs_roots,                        "  Update Roots")                  \
+  SHENANDOAH_PAR_PHASE_DO(final_update_refs_roots_, "    FUR: ", f)                    \
   f(final_update_refs_finish_work,                  "  Finish Work")                   \
   f(final_update_refs_update_region_states,         "  Update Region States")          \
   f(final_update_refs_trash_cset,                   "  Trash Collection Set")          \

@@ -59,6 +59,7 @@
 #include "runtime/flags/flagSetting.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/icache.hpp"
 #include "runtime/jniHandles.inline.hpp"
 #include "runtime/orderAccess.hpp"
 #include "runtime/os.hpp"
@@ -1132,6 +1133,15 @@ void nmethod::fix_oop_relocations(address begin, address end, bool initialize_im
       reloc->fix_metadata_relocation();
     }
   }
+
+  // After patching oop/metadata-bearing instructions, invalidate the I-cache
+  // for the modified code range. On architectures with split I/D caches
+  // (e.g., ARM32 movw/movt embedded oops), patched instructions are written
+  // to the D-cache but the I-cache may contain stale data from previous
+  // execution, leading to use of old (from-space) oop addresses after GC
+  // healing. The ICache flush is a no-op on architectures with coherent
+  // caches (e.g., x86).
+  ICache::invalidate_range(code_begin(), code_size());
 }
 
 

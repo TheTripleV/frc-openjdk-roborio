@@ -1205,6 +1205,12 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* current, Runtime1::StubID stub_
           }
           ICache::invalidate_range(instr_pc, *byte_count);
           NativeGeneralJump::replace_mt_safe(instr_pc, copy_buff);
+#ifdef ARM
+          // ARM32: replace_mt_safe wrote the first instruction (movw)
+          // AFTER the ICache flush above. We need a second flush so
+          // the I-cache sees the new movw (not the old branch).
+          ICache::invalidate_range(instr_pc, NativeGeneralJump::instruction_size);
+#endif
 
           if (load_klass_or_mirror_patch_id ||
               stub_id == Runtime1::load_appendix_patching_id) {
@@ -1227,6 +1233,36 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* current, Runtime1::StubID stub_
             RelocIterator iter2(nm, instr_pc2, instr_pc2 + 1);
             relocInfo::change_reloc_info_for_address(&iter2, (address) instr_pc2,
                                                      relocInfo::none, rtype);
+          }
+#endif
+#ifdef ARM
+          // ARM32 with movw/movt: The oop/metadata table must be
+          // updated to match the value now encoded in the patched
+          // instructions. The earlier n_copy->set_data() only patched
+          // the copy buffer's movw/movt encoding but could NOT update
+          // the oop table because:
+          //   1) The RelocIterator on the copy buffer address couldn't
+          //      find the reloc (it's recorded at instr_pc, not copy_buff)
+          //   2) The reloc type was still 'none' (not yet changed to
+          //      oop_type by change_reloc_info_for_address above)
+          // Now that the reloc type has been restored and the
+          // instructions are in place, read the patched value from
+          // the instruction and store it in the oop/metadata table.
+          {
+            NativeMovConstReg* patched_instr = nativeMovConstReg_at(instr_pc);
+            intptr_t patched_val = patched_instr->data();
+            RelocIterator iter2(nm, (address)instr_pc, (address)(instr_pc + 1));
+            while (iter2.next()) {
+              if (iter2.type() == relocInfo::oop_type) {
+                oop_Relocation* r = iter2.oop_reloc();
+                *(r->oop_addr()) = cast_to_oop(patched_val);
+                break;
+              } else if (iter2.type() == relocInfo::metadata_type) {
+                metadata_Relocation* r = iter2.metadata_reloc();
+                *(r->metadata_addr()) = (Metadata*)patched_val;
+                break;
+              }
+            }
           }
 #endif
           }

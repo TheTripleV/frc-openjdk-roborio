@@ -302,7 +302,23 @@ void ShenandoahBarrierSetAssembler::load_reference_barrier(MacroAssembler* masm,
   // This matches the aarch64 and C1 implementations.
   Label done_call;
   if (is_strong) {
-    // R0 = oop, R2/R3 are saved on stack and free for use as temps
+    // ARM32 Safety: heap bounds check before cset_map access.
+    // NULL is already handled by the cbz(dst, done) check above.
+    // If R0 is an out-of-heap garbage oop, R0 >> region_shift may be enormous,
+    // causing an out-of-bounds cset_map byte read.  A random OOB byte of 0
+    // would silently pass the garbage oop through; non-zero would call the
+    // runtime with a garbage oop.  Fix: validate R0 ∈ [heap_base, heap_base+max_capacity)
+    // before the cset_map check.  Out-of-heap oops are never in cset; branch
+    // directly to done_call (returns R0 unchanged).
+    {
+      ShenandoahHeap* heap = ShenandoahHeap::heap();
+      __ mov_address(R2, (address)heap->base());
+      __ sub(R2, R0, R2);  // R2 = R0 - heap_base (wraps if R0 < heap_base)
+      __ mov_address(R3, (address)(uintptr_t)heap->max_capacity());
+      __ cmp(R2, R3);
+      __ b(done_call, hs);  // unsigned >=: outside heap -> skip cset check and runtime
+    }
+    // R0 is within heap bounds: inline cset check is safe
     __ mov_address(R2, (address)ShenandoahHeap::in_cset_fast_test_addr());
     __ mov(R3, AsmOperand(R0, lsr, ShenandoahHeapRegion::region_size_bytes_shift_jint()));
     __ ldrb(R2, Address(R2, R3));
@@ -690,11 +706,34 @@ void ShenandoahBarrierSetAssembler::gen_load_reference_barrier_stub(LIR_Assemble
   }
 
   if (is_strong) {
-    // Check for object in cset
+    // ARM32 Safety: heap bounds check before cset_map access.
+    // If res is an out-of-heap garbage oop, (res >> region_shift) may be enormous,
+    // causing an out-of-bounds cset_map byte read.  That byte is uninitialized/random;
+    // if it happens to be 0 the barrier is silently skipped and the garbage oop is
+    // forwarded into the Java stack, eventually causing a SIGSEGV.
+    // Fix: verify res is within [heap_base, heap_base+max_capacity) before the
+    // inline cset check.  Out-of-heap oops are routed to the runtime which logs
+    // the situation and returns the oop unchanged (safe, since it cannot be in cset).
+    //
+    // NULL oops must be handled specially: NULL is below the heap base, so the
+    // unsigned subtraction wraps and the bounds check would route NULL to do_runtime.
+    // But NULL can never be in cset, so just skip to continuation for NULL.
+    __ cbz(res, *stub->continuation());
+    Label do_runtime;
+    {
+      ShenandoahHeap* heap = ShenandoahHeap::heap();
+      __ mov_address(tmp1, (address)heap->base());
+      __ sub(tmp1, res, tmp1);  // tmp1 = res - heap_base (wraps if res < heap_base)
+      __ mov_address(tmp2, (address)(uintptr_t)heap->max_capacity());
+      __ cmp(tmp1, tmp2);
+      __ b(do_runtime, hs);  // unsigned >=: outside heap -> skip inline check, call runtime
+    }
+    // res is within heap bounds: inline cset check is safe
     __ mov_address(tmp2, (address)ShenandoahHeap::in_cset_fast_test_addr());
     __ mov(tmp1, AsmOperand(res, lsr, ShenandoahHeapRegion::region_size_bytes_shift_jint()));
     __ ldrb(tmp2, Address(tmp2, tmp1));
     __ cbz(tmp2, *stub->continuation());
+    __ bind(do_runtime);
   }
 
   ce->verify_reserved_argument_area_size(2);

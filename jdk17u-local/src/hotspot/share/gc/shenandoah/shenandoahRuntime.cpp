@@ -52,13 +52,46 @@ JRT_LEAF(void, ShenandoahRuntime::write_ref_field_pre_entry(oopDesc* orig, JavaT
 JRT_END
 
 JRT_LEAF(oopDesc*, ShenandoahRuntime::load_reference_barrier_strong(oopDesc* src, oop* load_addr))
+  // NULL oops can never be in the collection set; return NULL immediately.
+  if (src == NULL) return NULL;
   if (((uintptr_t)src & 0x3) != 0) {
     tty->print_cr("SHENANDOAH BUG: unaligned oop %p in LRB strong, load_addr=%p", (void*)src, (void*)load_addr);
-    // Print caller LR from stack if possible
     tty->print_cr("  Thread=%p", Thread::current());
   }
   if (load_addr != NULL && ((uintptr_t)load_addr & 0x3) != 0) {
     tty->print_cr("SHENANDOAH BUG: unaligned load_addr %p in LRB strong, src=%p", (void*)load_addr, (void*)src);
+  }
+  // ARM32: guard against out-of-heap garbage oops.  These can reach the runtime
+  // when the C1 inline cset check is bypassed (bounds check above routes them
+  // here).  Log the situation so we can trace the source in the robot code crash.
+  if (src != NULL) {
+    ShenandoahHeap* heap = ShenandoahHeap::heap();
+    if (!heap->is_in(oop(src))) {
+      static int _oop_warn_count = 0;
+      if (_oop_warn_count < 20) {  // avoid log spam
+        _oop_warn_count++;  // racy but fine for diagnostic counter
+        tty->print_cr("[Shenandoah] LRB: out-of-heap oop=" PTR_FORMAT
+                     " load_addr=" PTR_FORMAT
+                     " heap=[" PTR_FORMAT "," PTR_FORMAT ")",
+                     p2i(src), p2i(load_addr),
+                     p2i(heap->base()),
+                     p2i(heap->base() + heap->max_capacity()));
+        Thread* t = Thread::current_or_null();
+        if (t != NULL) {
+          t->print_on(tty);
+        }
+        // Print load_addr neighbourhood to help identify the corrupted field
+        if (load_addr != NULL && heap->is_in((void*)load_addr)) {
+          tty->print_cr("  load_addr neighbourhood: [" PTR_FORMAT "]=" PTR_FORMAT
+                       " [" PTR_FORMAT "]=" PTR_FORMAT,
+                       p2i(load_addr - 1), p2i((address)*(load_addr - 1)),
+                       p2i(load_addr),     p2i((address)*load_addr));
+        }
+      }
+      // Do NOT call load_reference_barrier_mutator with an out-of-heap oop -
+      // it would try to evacuate it and likely crash.  Return src unchanged.
+      return src;
+    }
   }
   return ShenandoahBarrierSet::barrier_set()->load_reference_barrier_mutator(src, load_addr);
 JRT_END

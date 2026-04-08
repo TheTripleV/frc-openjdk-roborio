@@ -226,7 +226,17 @@ LIR_Opr ShenandoahBarrierSetC1::resolve_address(LIRAccess& access, bool resolve_
   // having a patch area in the load barrier stub, since the call
   // into the runtime to patch will not have the proper oop map.
   const bool patch_before_barrier = access.is_oop() && (access.decorators() & C1_NEEDS_PATCHING) != 0;
+#ifdef ARM32
+  // ARM32's leal() does not support lir_patch_normal: it asserts
+  // patch_code == lir_patch_none and generates 'add Rd, Rbase, #PATCHED_ADDR'
+  // without creating a PatchingStub.  The placeholder offset (PATCHED_ADDR=204)
+  // is never patched, so every execution reads at the wrong offset.
+  // On ARM32, let the load instruction itself handle field patching via the
+  // normal access_field PatchingStub mechanism.
+  return BarrierSetC1::resolve_address(access, resolve_in_register);
+#else
   return BarrierSetC1::resolve_address(access, resolve_in_register || patch_before_barrier);
+#endif
 }
 
 void ShenandoahBarrierSetC1::load_at_resolved(LIRAccess& access, LIR_Opr result) {
@@ -244,7 +254,20 @@ void ShenandoahBarrierSetC1::load_at_resolved(LIRAccess& access, LIR_Opr result)
   if (ShenandoahBarrierSet::need_load_reference_barrier(decorators, type)) {
     LIR_Opr tmp = gen->new_register(T_OBJECT);
     BarrierSetC1::load_at_resolved(access, tmp);
-    tmp = load_reference_barrier(gen, tmp, access.resolved_addr(), decorators);
+    LIR_Opr addr = access.resolved_addr();
+#ifdef ARM32
+    // On ARM32, when the field access needs patching (unresolved getstatic etc.),
+    // the resolved address still contains the placeholder offset PATCHED_ADDR (204).
+    // The load instruction above is patched at runtime by a PatchingStub, but the
+    // address passed to the LRB is compiled as a separate 'add Rd, Rbase, #204'
+    // instruction that is never patched.  Using this wrong address for self-healing
+    // would corrupt memory.  Pass NULL to disable self-healing; the LRB still
+    // correctly resolves the forwarded oop via the obj parameter.
+    if ((decorators & C1_NEEDS_PATCHING) != 0) {
+      addr = LIR_OprFact::addressConst(0);
+    }
+#endif
+    tmp = load_reference_barrier(gen, tmp, addr, decorators);
     __ move(tmp, result);
   } else {
     BarrierSetC1::load_at_resolved(access, result);

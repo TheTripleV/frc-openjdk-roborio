@@ -966,6 +966,22 @@ void ShenandoahConcurrentGC::op_final_updaterefs() {
 
   heap->finish_concurrent_roots();
 
+  // ARM32 fix: eagerly update ALL roots (including nmethod oop tables) at this safepoint.
+  // On ARM32, C1-compiled nmethods use table-based (non-immediate) oop relocations.
+  // The nmethod entry barrier's heal_nmethod uses ShenandoahEvacuateUpdateMetadataClosure
+  // which only updates oops in_collection_set. After final_updaterefs trashes cset regions
+  // and clears has_forwarded_objects, any nmethod that was never entered during the GC
+  // cycle would still have stale from-space oop table entries. The entry barrier's closure
+  // would then do nothing (in_collection_set returns false for trashed regions), leaving
+  // stale addresses in movw/movt instructions -> SIGSEGV on ARM32.
+  //
+  // By calling update_roots() here (at safepoint, before regions are trashed), forwarding
+  // pointers are still valid. ShenandoahRootUpdater processes code roots via
+  // ShenandoahCodeBlobAndDisarmClosure which: (1) updates oop table entries via
+  // ShenandoahUpdateRefsClosure (resolves forwarding), (2) calls fix_oop_relocations
+  // (copies updated values to movw/movt + ICache flush), (3) disarms the nmethod.
+  update_roots((int)ShenandoahPhaseTimings::final_update_refs_roots, false /*check_alive*/);
+
   // Clear cancelled GC, if set. On cancellation path, the block before would handle
   // everything.
   if (heap->cancelled_gc()) {

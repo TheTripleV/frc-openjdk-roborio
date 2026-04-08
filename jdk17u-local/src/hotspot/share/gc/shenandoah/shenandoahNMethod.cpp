@@ -168,13 +168,26 @@ void ShenandoahNMethod::heal_nmethod(nmethod* nm) {
     // ShenandoahEvacuateUpdateMetadataClosure asserts is_evacuation_in_progress(),
     // which is false here, so use ShenandoahUpdateRefsClosure to forward any
     // stale from-space embedded oops to their to-space copies.
+    // MUST fix relocations (patch movw/movt) here, because after heal_nmethod
+    // returns, the nmethod entry barrier disarms the nmethod. If embedded oop
+    // constants are not patched, the nmethod executes with stale from-space
+    // addresses. After the GC cycle completes and trashes old regions, those
+    // stale addresses point to unmapped memory → SIGSEGV.
     ShenandoahUpdateRefsClosure cl;
     data->oops_do(&cl, true /*fix relocations*/);
-  } else {
+  } else if (heap->cancelled_gc()) {
     // There is possibility that GC is cancelled when it arrives final mark.
     // In this case, concurrent root phase is skipped and degenerated GC should be
     // followed, where nmethods are disarmed.
-    assert(heap->cancelled_gc(), "What else?");
+  } else {
+    // Post-GC (gc_state=0): All nmethods should have been healed+disarmed during
+    // op_final_updaterefs via update_roots(). If we reach here, this nmethod somehow
+    // remained armed past the GC cycle. Its oop table was already updated by
+    // update_roots, so just fix relocations (copy oop table values to movw/movt)
+    // to ensure the embedded instructions have the correct to-space addresses.
+    if (data->has_non_immed_oops()) {
+      nm->fix_oop_relocations();
+    }
   }
 }
 
