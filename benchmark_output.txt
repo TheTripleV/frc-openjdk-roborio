@@ -1,0 +1,669 @@
+=============================================
+  GC Benchmark Suite for RoboRIO
+  Wed Apr  8 12:05:25 PDT 2026
+  Duration per test: 60s (settle: 20s)
+  Configs to test: 11
+=============================================
+Checking RIO connectivity...
+RIO is reachable.
+Stopping all robot processes...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+System clear. Free memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        277        220          1         34        155
+-/+ buffers/cache:         87        410
+Swap:            0          0          0
+
+
+>>>>> TEST 1 / 11 <<<<<
+
+==========================================
+  Testing: shen_iu_default
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -Xms50m -Xmx100m
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        277        220          1         34        155
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 7427 (after 8s)
+  Started PID 7427 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 41021 bytes, 385 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  12 total
+  │ Avg:     5.20ms
+  │ Min:     0.18ms
+  │ Max:     28.29ms
+  │ P50:     0.33ms
+  │ P95:     10.03ms
+  │ P99:     10.03ms
+  │ Types:   IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_iu_default
+
+>>>>> TEST 2 / 11 <<<<<
+
+==========================================
+  Testing: shen_iu_pretouch
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -Xms50m -Xmx100m -XX:+AlwaysPreTouch -XX:-ShenandoahUncommit
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        278        219          1         34        156
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 8151 (after 8s)
+  Started PID 8151 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 41021 bytes, 385 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  12 total
+  │ Avg:     6.03ms
+  │ Min:     0.20ms
+  │ Max:     25.72ms
+  │ P50:     1.85ms
+  │ P95:     17.56ms
+  │ P99:     17.56ms
+  │ Types:   IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_iu_pretouch
+
+>>>>> TEST 3 / 11 <<<<<
+
+==========================================
+  Testing: shen_iu_1thread
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -Xms50m -Xmx100m -XX:+AlwaysPreTouch -XX:-ShenandoahUncommit -XX:ConcGCThreads=1 -XX:ParallelGCThreads=1
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        278        219          1         34        156
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 9013 (after 8s)
+  Started PID 9013 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 41020 bytes, 385 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  12 total
+  │ Avg:     5.60ms
+  │ Min:     0.20ms
+  │ Max:     24.36ms
+  │ P50:     0.64ms
+  │ P95:     20.25ms
+  │ P99:     20.25ms
+  │ Types:   IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_iu_1thread
+
+>>>>> TEST 4 / 11 <<<<<
+
+==========================================
+  Testing: shen_iu_aggressive
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -Xms50m -Xmx100m -XX:+AlwaysPreTouch -XX:-ShenandoahUncommit -XX:ShenandoahGuaranteedGCInterval=10000 -XX:ConcGCThreads=1
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        279        218          1         34        157
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 9992 (after 8s)
+  Started PID 9992 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 93862 bytes, 869 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  28 total
+  │ Avg:     6.59ms
+  │ Min:     0.16ms
+  │ Max:     86.72ms
+  │ P50:     1.43ms
+  │ P95:     11.43ms
+  │ P99:     20.92ms
+  │ Types:   IM=28,FM=28,IU=28,FU=28,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_iu_aggressive
+
+>>>>> TEST 5 / 11 <<<<<
+
+==========================================
+  Testing: shen_satb_default
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -Xms50m -Xmx100m
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        279        218          1         34        157
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 10831 (after 8s)
+  Started PID 10831 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Waiting for java to die (1 processes remaining)...
+  Completed successfully. Pulling GC log...
+  GC log size: 45303 bytes, 424 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  12 total
+  │ Avg:     3.73ms
+  │ Min:     0.17ms
+  │ Max:     13.67ms
+  │ P50:     0.78ms
+  │ P95:     13.15ms
+  │ P99:     13.15ms
+  │ Types:   IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_satb_default
+
+>>>>> TEST 6 / 11 <<<<<
+
+==========================================
+  Testing: shen_satb_tuned
+  Args: -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -Xms50m -Xmx100m -XX:+AlwaysPreTouch -XX:-ShenandoahUncommit -XX:ConcGCThreads=1
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        280        217          1         34        158
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 11766 (after 8s)
+  Started PID 11766 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 45312 bytes, 424 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  12 total
+  │ Avg:     4.82ms
+  │ Min:     0.17ms
+  │ Max:     28.87ms
+  │ P50:     0.73ms
+  │ P95:     14.63ms
+  │ P99:     14.63ms
+  │ Types:   IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0
+0,YNG=0
+0
+  └─────────────────────────────────────
+  Done: shen_satb_tuned
+
+>>>>> TEST 7 / 11 <<<<<
+
+==========================================
+  Testing: g1_default
+  Args: -XX:+UseG1GC -Xms50m -Xmx100m
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        281        216          1         34        158
+-/+ buffers/cache:         88        409
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 12638 (after 8s)
+  Started PID 12638 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 8644 bytes, 92 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  5 total
+  │ Avg:     137.64ms
+  │ Min:     31.45ms
+  │ Max:     258.71ms
+  │ P50:     58.95ms
+  │ P95:     204.06ms
+  │ P99:     204.06ms
+  │ Types:   IM=0
+0,FM=0
+0,IU=0
+0,FU=0
+0,DG=0
+0,FULL=0
+0,YNG=10
+  └─────────────────────────────────────
+  Done: g1_default
+
+>>>>> TEST 8 / 11 <<<<<
+
+==========================================
+  Testing: g1_lowpause
+  Args: -XX:+UseG1GC -Xms50m -Xmx100m -XX:MaxGCPauseMillis=10 -XX:+AlwaysPreTouch -XX:ParallelGCThreads=2 -XX:ConcGCThreads=1
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        281        216          1         34        158
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 13464 (after 8s)
+  Started PID 13464 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Completed successfully. Pulling GC log...
+  GC log size: 94482 bytes, 957 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  59 total
+  │ Avg:     34.32ms
+  │ Min:     6.79ms
+  │ Max:     171.81ms
+  │ P50:     27.48ms
+  │ P95:     80.33ms
+  │ P99:     106.25ms
+  │ Types:   IM=0
+0,FM=0
+0,IU=0
+0,FU=0
+0,DG=0
+0,FULL=0
+0,YNG=118
+  └─────────────────────────────────────
+  Done: g1_lowpause
+
+>>>>> TEST 9 / 11 <<<<<
+
+==========================================
+  Testing: g1_1thread
+  Args: -XX:+UseG1GC -Xms50m -Xmx100m -XX:MaxGCPauseMillis=5 -XX:+AlwaysPreTouch -XX:ParallelGCThreads=1 -XX:ConcGCThreads=1 -XX:G1HeapRegionSize=1m
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        275        222          2         34        159
+-/+ buffers/cache:         81        416
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 14364 (after 8s)
+  Started PID 14364 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Waiting for java to die (1 processes remaining)...
+  Completed successfully. Pulling GC log...
+  GC log size: 104186 bytes, 1056 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  65 total
+  │ Avg:     30.78ms
+  │ Min:     7.80ms
+  │ Max:     120.26ms
+  │ P50:     24.02ms
+  │ P95:     71.61ms
+  │ P99:     98.48ms
+  │ Types:   IM=0
+0,FM=0
+0,IU=0
+0,FU=0
+0,DG=0
+0,FULL=0
+0,YNG=130
+  └─────────────────────────────────────
+  Done: g1_1thread
+
+>>>>> TEST 10 / 11 <<<<<
+
+==========================================
+  Testing: serial_default
+  Args: -XX:+UseSerialGC -Xms50m -Xmx100m
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        282        215          2         34        160
+-/+ buffers/cache:         87        410
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 15289 (after 8s)
+  Started PID 15289 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Waiting for java to die (1 processes remaining)...
+  Completed successfully. Pulling GC log...
+  GC log size: 5712 bytes, 53 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  7 total
+  │ Avg:     48.13ms
+  │ Min:     15.90ms
+  │ Max:     124.23ms
+  │ P50:     31.84ms
+  │ P95:     52.72ms
+  │ P99:     52.72ms
+  │ Types:   IM=0
+0,FM=0
+0,IU=0
+0,FU=0
+0,DG=0
+0,FULL=0
+0,YNG=14
+  └─────────────────────────────────────
+  Done: serial_default
+
+>>>>> TEST 11 / 11 <<<<<
+
+==========================================
+  Testing: serial_pretouch
+  Args: -XX:+UseSerialGC -Xms50m -Xmx100m -XX:+AlwaysPreTouch
+==========================================
+  Pre-test memory:
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+             total       used       free     shared    buffers     cached
+Mem:           497        283        214          2         34        160
+-/+ buffers/cache:         88        409
+  Launching java...
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+NI Linux Real-Time (run mode)
+
+Log in with your NI-Auth credentials.
+
+  Waiting for JVM to start...
+  Java PID: 16183 (after 8s)
+  Started PID 16183 (after 8s)
+  Settling for 20s...
+  Still alive after warmup.
+  Measuring for 40s...
+  Waiting for java to die (1 processes remaining)...
+  Completed successfully. Pulling GC log...
+  GC log size: 5017 bytes, 47 lines
+  ┌─────────────────────────────────────
+  │ Pauses:  6 total
+  │ Avg:     60.25ms
+  │ Min:     24.30ms
+  │ Max:     172.56ms
+  │ P50:     35.44ms
+  │ P95:     52.02ms
+  │ P99:     52.02ms
+  │ Types:   IM=0
+0,FM=0
+0,IU=0
+0,FU=0
+0,DG=0
+0,FULL=0
+0,YNG=12
+  └─────────────────────────────────────
+  Done: serial_pretouch
+
+Cleaning up...
+Benchmark complete. Robot code is stopped. Redeploy or restart manually.
+
+=============================================
+  RESULTS SUMMARY
+=============================================
+
+CONFIG                 STATUS     AVG_ms   MIN_ms   MAX_ms   P50_ms   P95_ms   P99_ms  COUNT BREAKDOWN
+-----------------------------------------------------------------------------------------------------------
+shen_iu_default        OK           5.20     0.18    28.29     0.33    10.03    10.03     12 IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+shen_iu_pretouch       OK           6.03     0.20    25.72     1.85    17.56    17.56     12 IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+shen_iu_1thread        OK           5.60     0.20    24.36     0.64    20.25    20.25     12 IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+shen_iu_aggressive     OK           6.59     0.16    86.72     1.43    11.43    20.92     28 IM=28,FM=28,IU=28,FU=28,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+shen_satb_default      OK           3.73     0.17    13.67     0.78    13.15    13.15     12 IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+shen_satb_tuned        OK           4.82     0.17    28.87     0.73    14.63    14.63     12 IM=12,FM=12,IU=12,FU=12,DG=0
+0,FULL=0                                                                                     
+0,YNG=0                                                                                      
+0                                                                                            
+g1_default             OK         137.64    31.45   258.71    58.95   204.06   204.06      5 IM=0
+0,FM=0                                                                                       
+0,IU=0                                                                                       
+0,FU=0                                                                                       
+0,DG=0                                                                                       
+0,FULL=0                                                                                     
+0,YNG=10                                                                                     
+g1_lowpause            OK          34.32     6.79   171.81    27.48    80.33   106.25     59 IM=0
+0,FM=0                                                                                       
+0,IU=0                                                                                       
+0,FU=0                                                                                       
+0,DG=0                                                                                       
+0,FULL=0                                                                                     
+0,YNG=118                                                                                    
+g1_1thread             OK          30.78     7.80   120.26    24.02    71.61    98.48     65 IM=0
+0,FM=0                                                                                       
+0,IU=0                                                                                       
+0,FU=0                                                                                       
+0,DG=0                                                                                       
+0,FULL=0                                                                                     
+0,YNG=130                                                                                    
+serial_default         OK          48.13    15.90   124.23    31.84    52.72    52.72      7 IM=0
+0,FM=0                                                                                       
+0,IU=0                                                                                       
+0,FU=0                                                                                       
+0,DG=0                                                                                       
+0,FULL=0                                                                                     
+0,YNG=14                                                                                     
+serial_pretouch        OK          60.25    24.30   172.56    35.44    52.02    52.02      6 IM=0
+0,FM=0                                                                                       
+0,IU=0                                                                                       
+0,FU=0                                                                                       
+0,DG=0                                                                                       
+0,FULL=0                                                                                     
+0,YNG=12                                                                                     
+
+Raw CSV: /tmp/gc_results_local.csv
+GC logs: /tmp/gc_bench_*_gc.log
+=============================================

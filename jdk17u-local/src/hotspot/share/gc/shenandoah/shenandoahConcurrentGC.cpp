@@ -925,6 +925,15 @@ void ShenandoahConcurrentGC::op_init_updaterefs() {
   heap->prepare_update_heap_references(true /*concurrent*/);
   heap->set_update_refs_in_progress(true);
 
+  // ARM32 optimization: Re-arm all nmethods so the entry barrier lazily updates
+  // their embedded oops during the concurrent update-refs phase. When a Java thread
+  // enters an armed nmethod, heal_nmethod() applies ShenandoahUpdateRefsClosure +
+  // fix_oop_relocations(), then disarms the nmethod. By the time we reach the STW
+  // Final Update Refs pause, most hot nmethods have already been healed concurrently.
+  // The STW pause only needs to process cold nmethods that were never entered, which
+  // is typically a small fraction of the code cache.
+  ShenandoahCodeRoots::arm_nmethods();
+
   if (ShenandoahPacing) {
     heap->pacer()->setup_for_updaterefs();
   }
@@ -968,18 +977,15 @@ void ShenandoahConcurrentGC::op_final_updaterefs() {
 
   // ARM32 fix: eagerly update ALL roots (including nmethod oop tables) at this safepoint.
   // On ARM32, C1-compiled nmethods use table-based (non-immediate) oop relocations.
-  // The nmethod entry barrier's heal_nmethod uses ShenandoahEvacuateUpdateMetadataClosure
-  // which only updates oops in_collection_set. After final_updaterefs trashes cset regions
-  // and clears has_forwarded_objects, any nmethod that was never entered during the GC
-  // cycle would still have stale from-space oop table entries. The entry barrier's closure
-  // would then do nothing (in_collection_set returns false for trashed regions), leaving
-  // stale addresses in movw/movt instructions -> SIGSEGV on ARM32.
+  // The nmethod entry barrier's heal_nmethod uses ShenandoahUpdateRefsClosure during the
+  // update-refs phase to resolve forwarding pointers and patch movw/movt instructions.
   //
-  // By calling update_roots() here (at safepoint, before regions are trashed), forwarding
-  // pointers are still valid. ShenandoahRootUpdater processes code roots via
-  // ShenandoahCodeBlobAndDisarmClosure which: (1) updates oop table entries via
-  // ShenandoahUpdateRefsClosure (resolves forwarding), (2) calls fix_oop_relocations
-  // (copies updated values to movw/movt + ICache flush), (3) disarms the nmethod.
+  // Nmethods were re-armed at op_init_updaterefs. During the concurrent update-refs phase,
+  // most hot nmethods were lazily healed and disarmed by the entry barrier when Java
+  // threads entered them. Here at the STW pause, we process the remaining armed nmethods
+  // (cold code never entered during update-refs). ShenandoahCodeBlobAndDisarmClosure skips
+  // already-disarmed nmethods via the is_armed() check, so Code Cache Roots scanning is
+  // proportional to the number of cold nmethods rather than the entire code cache.
   update_roots((int)ShenandoahPhaseTimings::final_update_refs_roots, false /*check_alive*/);
 
   // Clear cancelled GC, if set. On cancellation path, the block before would handle

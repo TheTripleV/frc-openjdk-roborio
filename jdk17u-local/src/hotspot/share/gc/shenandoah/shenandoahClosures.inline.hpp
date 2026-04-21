@@ -227,9 +227,12 @@ ShenandoahCodeBlobAndDisarmClosure::ShenandoahCodeBlobAndDisarmClosure(OopClosur
 
 void ShenandoahCodeBlobAndDisarmClosure::do_code_blob(CodeBlob* cb) {
   nmethod* const nm = cb->as_nmethod_or_null();
-  if (nm != NULL) {
+  if (nm != NULL && _bs->is_armed(nm)) {
     assert(!ShenandoahNMethod::gc_data(nm)->is_unregistered(), "Should not be here");
-    CodeBlobToOopClosure::do_code_blob(cb);
+    ShenandoahNMethod* data = ShenandoahNMethod::gc_data(nm);
+    if (data->has_cset_oops(ShenandoahHeap::heap())) {
+      CodeBlobToOopClosure::do_code_blob(cb);
+    }
     _bs->disarm(nm);
   }
 }

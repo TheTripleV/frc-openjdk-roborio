@@ -1,6 +1,6 @@
 #!/bin/bash
 # Comprehensive Shenandoah GC test runner for RoboRIO
-# Runs ALL tests in aggressive AND adaptive modes
+# Runs tests in IU mode, SATB aggressive, and SATB adaptive modes
 # Heap sizes tuned for 497MB RAM system
 
 JAVA=/usr/local/frc/JRE/bin/java
@@ -53,7 +53,166 @@ echo ""
 cd "$TESTDIR" || { echo "Cannot cd to $TESTDIR"; exit 1; }
 
 # ============================================================
-echo "=== AGGRESSIVE MODE TESTS ==="
+echo "=== IU (INCREMENTAL-UPDATE) MODE TESTS ==="
+# ============================================================
+
+IU="-XX:ShenandoahGCMode=iu"
+
+echo ""
+echo "[IU-1] TestAllocObjects"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=1500 -cp . TestAllocObjects
+
+echo ""
+echo "[IU-2] TestAllocIntArrays"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=500 -cp . TestAllocIntArrays
+
+echo ""
+echo "[IU-3] TestAllocObjectArrays"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=500 -cp . TestAllocObjectArrays
+
+echo ""
+echo "[IU-4] TestAllocHumongousFragment"
+TIMEOUT=300 run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Doccupancy=50 -Dtarget=1000 -cp . TestAllocHumongousFragment
+
+echo ""
+echo "[IU-5] TestArrayCopyStress"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestArrayCopyStress
+
+echo ""
+echo "[IU-6] TestArrayCopyCheckCast"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestArrayCopyCheckCast
+
+echo ""
+echo "[IU-7] TestElasticTLAB"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestElasticTLAB
+
+echo ""
+echo "[IU-8] TestGCThreadGroups"
+TIMEOUT=180 run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=500 -cp . TestGCThreadGroups
+
+echo ""
+echo "[IU-9] TestHumongousThreshold"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestHumongousThreshold
+
+echo ""
+echo "[IU-10] TestLargeObjectAlignment"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestLargeObjectAlignment
+
+echo ""
+echo "[IU-11] TestLotsOfCycles"
+TIMEOUT=240 run_test "iu-adaptive" $COMMON $IU -Xmx16m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=1500 -cp . TestLotsOfCycles
+
+echo ""
+echo "[IU-12] TestRefprocSanity"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestRefprocSanity
+
+echo ""
+echo "[IU-13] TestParallelRefprocSanity"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -XX:+ParallelRefProcEnabled \
+    -cp . TestParallelRefprocSanity
+
+echo ""
+echo "[IU-14] TestRegionSampling"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -Dtarget=500 -cp . TestRegionSampling
+
+echo ""
+echo "[IU-15] TestResizeTLAB"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestResizeTLAB
+
+echo ""
+echo "[IU-16] TestRetainObjects"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestRetainObjects
+
+echo ""
+echo "[IU-17] TestSieveObjects"
+TIMEOUT=180 run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestSieveObjects
+
+echo ""
+echo "[IU-18] TestSmallHeap"
+run_test "iu-4m" $COMMON $IU -Xmx4m -cp . TestSmallHeap
+run_test "iu-16m" $COMMON $IU -Xmx16m -cp . TestSmallHeap
+run_test "iu-64m" $COMMON $IU -Xmx64m -cp . TestSmallHeap
+
+echo ""
+echo "[IU-19] TestStringInternCleanup"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestStringInternCleanup
+
+echo ""
+echo "[IU-20] TestWithLogLevel"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -DallocMB=50 \
+    -cp . TestWithLogLevel
+
+echo ""
+echo "[IU-21] TestVerifyJCStress"
+TIMEOUT=600 run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -DouterCount=1000 -DinnerCount=5000 \
+    -cp . TestVerifyJCStress
+
+echo ""
+echo "[IU-22] TestWrongArrayMember"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestWrongArrayMember
+
+echo ""
+echo "[IU-23] TestVerifyLevels"
+run_test "iu-adaptive" $COMMON $IU -Xmx150m -Xms150m \
+    -XX:ShenandoahGCHeuristics=adaptive \
+    -cp . TestVerifyLevels
+
+echo ""
+echo "--- IU Mode Results: $PASS passed, $FAIL failed out of $TOTAL tests ---"
+IU_PASS=$PASS
+IU_FAIL=$FAIL
+IU_TOTAL=$TOTAL
+
+# Reset counters for SATB modes
+PASS=0
+FAIL=0
+TOTAL=0
+
+# ============================================================
+echo ""
+echo "=== SATB AGGRESSIVE MODE TESTS ==="
 # ============================================================
 
 echo ""
@@ -344,10 +503,18 @@ run_test "compact" $COMMON -Xmx150m -Xms150m \
 # ============================================================
 echo ""
 echo "============================================"
-echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
-if [ $FAIL -gt 0 ]; then
+SATB_PASS=$PASS
+SATB_FAIL=$FAIL
+SATB_TOTAL=$TOTAL
+ALL_PASS=$((IU_PASS + SATB_PASS))
+ALL_FAIL=$((IU_FAIL + SATB_FAIL))
+ALL_TOTAL=$((IU_TOTAL + SATB_TOTAL))
+echo "IU MODE:   $IU_PASS passed, $IU_FAIL failed out of $IU_TOTAL tests"
+echo "SATB MODE: $SATB_PASS passed, $SATB_FAIL failed out of $SATB_TOTAL tests"
+echo "OVERALL:   $ALL_PASS passed, $ALL_FAIL failed out of $ALL_TOTAL tests"
+if [ $ALL_FAIL -gt 0 ]; then
     echo -e "FAILURES:$ERRORS"
 fi
 echo "============================================"
 
-exit $FAIL
+exit $ALL_FAIL

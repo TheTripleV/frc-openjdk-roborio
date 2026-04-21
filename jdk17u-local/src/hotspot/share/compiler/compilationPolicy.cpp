@@ -40,6 +40,7 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/safepointVerifiers.hpp"
+#include <ctype.h>
 
 #if INCLUDE_JVMCI
 #include "jvmci/jvmci.hpp"
@@ -57,6 +58,66 @@ jlong CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
+
+static bool matches_package_prefix(const char* holder_name, const char* pattern, size_t pattern_len) {
+  while (pattern_len > 0 && isspace(pattern[0])) {
+    pattern++;
+    pattern_len--;
+  }
+  while (pattern_len > 0 && isspace(pattern[pattern_len - 1])) {
+    pattern_len--;
+  }
+
+  if (pattern_len >= 2 &&
+      ((pattern[pattern_len - 2] == '.' && pattern[pattern_len - 1] == '*') ||
+       (pattern[pattern_len - 2] == '/' && pattern[pattern_len - 1] == '*'))) {
+    pattern_len -= 2;
+  }
+  while (pattern_len > 0 && (pattern[pattern_len - 1] == '.' || pattern[pattern_len - 1] == '/')) {
+    pattern_len--;
+  }
+  if (pattern_len == 0) {
+    return false;
+  }
+
+  for (size_t i = 0; i < pattern_len; i++) {
+    char expected = (pattern[i] == '.') ? '/' : pattern[i];
+    if (holder_name[i] == '\0' || holder_name[i] != expected) {
+      return false;
+    }
+  }
+
+  // Require package boundary: exact type name or subpackage/class separator.
+  return holder_name[pattern_len] == '\0' || holder_name[pattern_len] == '/';
+}
+
+bool CompilationPolicy::force_c1_by_package(const methodHandle& method) {
+  if (ForceC1CompilePackages == NULL || ForceC1CompilePackages[0] == '\0') {
+    return false;
+  }
+
+  ResourceMark rm;
+  const char* holder_name = method->method_holder()->name()->as_C_string();
+  const char* p = ForceC1CompilePackages;
+
+  while (*p != '\0') {
+    while (*p == ',' || isspace(*p)) {
+      p++;
+    }
+    const char* start = p;
+    while (*p != '\0' && *p != ',') {
+      p++;
+    }
+    size_t len = (size_t)(p - start);
+    if (len > 0 && matches_package_prefix(holder_name, start, len)) {
+      return true;
+    }
+    if (*p == ',') {
+      p++;
+    }
+  }
+  return false;
+}
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -81,8 +142,15 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
   if (m->has_compiled_code()) return false;       // already compiled
   if (!can_be_compiled(m, comp_level)) return false;
 
-  return !UseInterpreter ||                                              // must compile all methods
-         (UseCompiler && AlwaysCompileLoopMethods && m->has_loops() && CompileBroker::should_compile_new_jobs()); // eagerly compile loop methods
+    const bool force_package_c1 = UseInterpreter &&
+              UseCompiler &&
+              CompileBroker::should_compile_new_jobs() &&
+              force_c1_by_package(m) &&
+              can_be_compiled(m, CompLevel_simple);
+
+    return !UseInterpreter ||                                              // must compile all methods
+      (UseCompiler && AlwaysCompileLoopMethods && m->has_loops() && CompileBroker::should_compile_new_jobs()) || // eagerly compile loop methods
+      force_package_c1;
 }
 
 void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
@@ -577,6 +645,10 @@ CompLevel CompilationPolicy::limit_level(CompLevel level) {
 }
 
 CompLevel CompilationPolicy::initial_compile_level(const methodHandle& method) {
+  if (force_c1_by_package(method)) {
+    return limit_level(CompLevel_simple);
+  }
+
   CompLevel level = CompLevel_any;
   if (CompilationModeFlag::normal()) {
     level = CompLevel_full_profile;
@@ -746,6 +818,10 @@ nmethod* CompilationPolicy::event(const methodHandle& method, const methodHandle
 
 // Check if the method can be compiled, change level if necessary
 void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level, TRAPS) {
+  if (force_c1_by_package(mh) && level > CompLevel_full_profile) {
+    level = CompLevel_full_profile;
+  }
+
   assert(verify_level(level), "Invalid compilation level requested: %d", level);
 
   if (level == CompLevel_none) {

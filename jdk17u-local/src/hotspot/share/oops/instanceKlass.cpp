@@ -1196,6 +1196,20 @@ void InstanceKlass::initialize_impl(TRAPS) {
   if (!HAS_PENDING_EXCEPTION) {
     set_initialization_state_and_notify(fully_initialized, CHECK);
     debug_only(vtable().verify(tty, true);)
+
+    // If package-scoped forced C1 compilation is configured, enqueue methods of
+    // this class as soon as initialization completes instead of waiting for first hit.
+    if (ForceC1CompilePackages != NULL && ForceC1CompilePackages[0] != '\0' &&
+        CompileBroker::should_compile_new_jobs()) {
+      Array<Method*>* const klass_methods = methods();
+      for (int i = 0; i < klass_methods->length(); i++) {
+        Method* const m = klass_methods->at(i);
+        if (m != NULL) {
+          methodHandle mh(THREAD, m);
+          CompilationPolicy::compile_if_required(mh, THREAD);
+        }
+      }
+    }
   }
   else {
     // Step 10 and 11

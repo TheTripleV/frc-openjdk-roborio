@@ -291,6 +291,10 @@
                                                                             \
   product(ccstrlist, CompileOnly, "",                                       \
           "List of methods (pkg/class.name) to restrict compilation to")    \
+                                                                           \
+  product(ccstrlist, ForceC1CompilePackages, "",                            \
+          "Comma-separated package prefixes to eagerly compile with C1 "     \
+          "(e.g. com.myteam.robot,edu.wpi.first)")                         \
                                                                             \
   product(ccstr, CompileCommandFile, NULL,                                  \
           "Read compiler commands from this file [.hotspot_compiler]")      \

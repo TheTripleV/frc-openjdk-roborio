@@ -1,0 +1,1 @@
+/usr/local/frc/JRE/bin/java -Djava.lang.invoke.stringConcat=BC_SB -Djava.library.path=/usr/local/frc/third-party/lib -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -Xlog:gc*=info:file=/tmp/gc.log:time,uptime,level,tags -jar /home/lvuser/2026-Delta.jar

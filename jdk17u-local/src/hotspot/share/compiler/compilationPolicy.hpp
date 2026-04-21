@@ -222,6 +222,8 @@ class CompilationPolicy : AllStatic {
   inline static bool is_trivial(const methodHandle& method);
   // Force method to be compiled at CompLevel_simple?
   inline static bool force_comp_at_level_simple(const methodHandle& method);
+  // Force method into eager C1-only policy by package prefix match?
+  static bool force_c1_by_package(const methodHandle& method);
 
   // Get a compilation level for a given method.
   static CompLevel comp_level(Method* method);
